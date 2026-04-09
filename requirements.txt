@@ -1,0 +1,165 @@
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+kubernetes==29.0.0
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.9
+httpx==0.27.0
+redis==5.0.4
+sqlalchemy==2.0.30
+psycopg[binary]==3.2.3
+pydantic==2.7.1
+pydantic-settings==2.2.1
+anthropic==0.26.0
+python-dotenv==1.0.1
+jinja2==3.1.4
+aiofiles==23.2.1
+pytest==8.2.0
+pytest-asyncio==0.23.6
+```powershell
+pip install "psycopg[binary]==3.2.3"
+```
+```powershell
+pip install pydantic==2.7.1
+```
+```powershell
+pip install pydantic-settings==2.2.1
+```
+```powershell
+pip install anthropic==0.26.0
+```
+```powershell
+pip install python-dotenv==1.0.1
+```
+```powershell
+pip install jinja2==3.1.4
+```
+```powershell
+pip install aiofiles==23.2.1
+```
+```powershell
+pip install pytest==8.2.0
+```
+```powershell
+pip install pytest-asyncio==0.23.6
+```
+
+---
+
+**Note — skip the version numbers if any fail**, for example:
+
+```powershell
+pip install fastapi
+```
+
+If `psycopg[binary]` fails try:
+
+```powershell
+pip install psycopg2-binary --only-binary=:all:
+```
+
+Paste any error and I'll fix it instantly.
+
+
+================================================================
+
+Great question. Here's what each package does and where the LLM fits in:
+
+---
+
+## The LLM — where it lives
+
+```
+ANTHROPIC_API_KEY=sk-ant-your-key-here   ← in your .env file
+ANTHROPIC_MODEL=claude-sonnet-4-20250514  ← also in .env
+```
+
+The LLM is **Claude (by Anthropic)** — accessed via API, not running locally. Your code sends queries to Anthropic's servers and gets responses back. That's what `anthropic==0.26.0` is for.
+
+**Flow:**
+```
+You type a question
+    → FastAPI receives it
+    → agents/read_agent.py sends it to Claude API
+    → Claude parses intent + summarises K8s data
+    → Answer comes back to your chat UI
+```
+
+---
+
+## Why each package is needed
+
+### Core Web Framework
+| Package | Why needed |
+|---|---|
+| `fastapi` | The web framework — runs your API endpoints (`/api/chat/query`, `/api/auth/login` etc.) |
+| `uvicorn` | The server that actually runs FastAPI — like Apache/Nginx but for Python |
+
+### AI / LLM
+| Package | Why needed |
+|---|---|
+| `anthropic` | Official SDK to call Claude API — used in `agents/read_agent.py` to parse intent and summarise K8s data |
+
+### Kubernetes
+| Package | Why needed |
+|---|---|
+| `kubernetes` | Official Python K8s client — used in `gateway/cluster_gateway.py` to talk to GKE, EKS, AKS, Rancher |
+
+### Database
+| Package | Why needed |
+|---|---|
+| `sqlalchemy` | ORM — maps Python classes to Postgres tables (User, ClusterRegistry, AuditLog) |
+| `psycopg[binary]` | Postgres driver — SQLAlchemy uses this to actually connect to Postgres |
+| `pydantic` | Data validation — every API request/response is validated through Pydantic schemas |
+| `pydantic-settings` | Loads your `.env` file into the `Settings` class in `config/settings.py` |
+
+### Auth / Security
+| Package | Why needed |
+|---|---|
+| `python-jose` | Creates and validates JWT tokens — used in `auth/jwt_handler.py` |
+| `passlib[bcrypt]` | Hashes passwords securely — used when creating users in `auth/auth_service.py` |
+| `python-multipart` | Handles form data — needed for the OAuth2 login form in Swagger UI |
+
+### HTTP & Session
+| Package | Why needed |
+|---|---|
+| `httpx` | Async HTTP client — used to call external APIs (Datadog, GitHub) |
+| `redis` | Session cache — stores chat context between queries (Phase 2 uses this fully) |
+
+### Templating & Files
+| Package | Why needed |
+|---|---|
+| `jinja2` | HTML templating — serves the chat UI at `http://localhost:8000` |
+| `aiofiles` | Async file reading — needed by FastAPI to serve static files |
+| `python-dotenv` | Reads your `.env` file on startup |
+
+### Testing
+| Package | Why needed |
+|---|---|
+| `pytest` | Runs your test files in `tests/` folder |
+| `pytest-asyncio` | Lets pytest run async FastAPI test functions |
+
+---
+
+## Packages you can skip for now
+
+If you just want it running quickly, these are **optional for Phase 1**:
+
+```powershell
+# Skip these for now — needed later
+pip install redis==5.0.4        # Phase 2
+pip install pytest==8.2.0       # Only for running tests
+pip install pytest-asyncio==0.23.6  # Only for running tests
+```
+
+---
+
+## Minimum to get it running right now
+
+```powershell
+pip install fastapi uvicorn[standard] sqlalchemy "psycopg[binary]" python-jose[cryptography] passlib[bcrypt] python-multipart anthropic pydantic pydantic-settings python-dotenv jinja2 aiofiles httpx kubernetes
+```
+
+That's all you need. Get your `ANTHROPIC_API_KEY` from **https://console.anthropic.com** — that's the only external account required.
+
+===================================================================================================
