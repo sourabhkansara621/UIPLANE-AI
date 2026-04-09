@@ -45,7 +45,28 @@ def _get_registry(
     db: Session,
     environment: Optional[str] = None,
 ) -> List[ClusterRegistry]:
-    """Resolve app_name to registry entries, optionally filtered by env."""
+    """
+    Resolve an application name to its cluster registry entries.
+    
+    Looks up where an application is deployed by querying the ClusterRegistry.
+    An app can be deployed in multiple clusters/environments.
+    
+    Args:
+        app_name: Application name to look up
+        db: Database session
+        environment: Optional filter (e.g., 'prod', 'staging', 'nonprod')
+        
+    Returns:
+        List of ClusterRegistry entries showing where the app is deployed
+        
+    Raises:
+        HTTPException 404: If app not found in any cluster
+        
+    Example:
+        For app_name="payments-api" might return:
+        - [ClusterRegistry(cluster="gke-prod", namespace="payments-prod", env="prod")]
+        Or multiple entries if deployed to staging + prod.
+    """
     q = db.query(ClusterRegistry).filter(
         ClusterRegistry.app_name == app_name,
         ClusterRegistry.is_active == True,
@@ -66,8 +87,28 @@ def _first_registry(
     db: Session,
     environment: Optional[str] = None,
 ) -> ClusterRegistry:
-    """Return first registry entry. Prefer prod if no env specified."""
+    """
+    Get the first (preferred) registry entry for an application.
+    
+    When an app exists in multiple environments, this returns the most
+    relevant one - preferring production if no environment specified.
+    
+    Args:
+        app_name: Application name
+        db: Database session
+        environment: Optional environment filter
+        
+    Returns:
+        Single ClusterRegistry entry (production if available, else first entry)
+        
+    Raises:
+        HTTPException 404: If app not found
+        
+    Usage:
+        Used for operations that only need one cluster (e.g., fetching pod logs).
+    """
     entries = _get_registry(app_name, db, environment)
+    # Prefer production environment if present
     prod = [e for e in entries if e.environment == "prod"]
     return prod[0] if prod else entries[0]
 
@@ -82,9 +123,39 @@ def get_pods(
     current_user: User = Depends(get_current_active_user),
     gateway: ClusterGateway = Depends(get_gateway),
 ):
-    """List all pods for an application across its registered cluster(s)."""
+    """
+    List all pods for an application across its registered clusters.
+    
+    Returns detailed pod information including status, resource usage,
+    restarts, and age.
+    
+    Args:
+        app_name: Application name (e.g., 'payments-api')
+        environment: Optional filter (prod/staging/nonprod)
+        db: Database session
+        current_user: Authenticated user
+        gateway: Cluster gateway for K8s API access
+        
+    Returns:
+        List of PodInfo objects containing:
+        - name, namespace, status, ready
+        - restarts, age, node
+        - cpu_request, memory_request, image
+        
+    Raises:
+        HTTPException 403: If user lacks access to this app
+        HTTPException 404: If app not found in registry
+        
+    RBAC:
+        Requires read access to the application (checked via require_app_access).
+    """
+    # Check user has permission to access this app
     require_app_access(current_user, app_name, db)
+    
+    # Get all clusters where this app is deployed
     entries = _get_registry(app_name, db, environment)
+    
+    # Fetch pods from all relevant clusters and aggregate
     all_pods = []
     for reg in entries:
         all_pods.extend(list_pods(reg.cluster_name, reg.namespace, gateway))

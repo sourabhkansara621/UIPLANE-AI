@@ -1,6 +1,24 @@
 """capabilities/k8s_writer.py
 ---------------------------
 Controlled write operations for Kubernetes workloads.
+
+This module provides safe, audited mutation functions for Kubernetes resources.
+All functions:
+- Validate inputs before making changes
+- Log modifications for audit trails
+- Return structured results showing what changed
+- Raise clear exceptions on errors
+
+IMPORTANT:
+    All write operations should be protected by RBAC checks at the router level.
+    Never call these functions without first verifying user has mutation permission.
+
+Supported Operations:
+    - update_deployment: Change image or replica count
+    - update_service: Modify service type or ports
+    - update_ingress_host: Change ingress hostname
+    - update_secret_key: Update a secret key value
+    - update_resource_quota: Adjust namespace resource limits
 """
 
 import logging
@@ -14,6 +32,19 @@ logger = logging.getLogger(__name__)
 
 
 def _service_ports_to_text(ports: Any) -> Any:
+    """
+    Convert Kubernetes service ports to human-readable format.
+    
+    Args:
+        ports: List of Kubernetes service port objects
+        
+    Returns:
+        List of port strings in format "8080->80/TCP"
+        
+    Example:
+        Input: [ServicePort(port=80, target_port=8080, protocol="TCP")]
+        Output: ["80->8080/TCP"]
+    """
     out = []
     for p in ports or []:
         port = getattr(p, "port", None)
@@ -90,19 +121,68 @@ def update_service(
     port: Optional[int] = None,
     target_port: Optional[int] = None,
 ) -> Dict[str, Any]:
+    """
+    Update a Kubernetes service configuration.
+    
+    Allows changing service type (ClusterIP, NodePort, LoadBalancer) and port mappings.
+    
+    Args:
+        cluster_name: Name of the Kubernetes cluster
+        namespace: Namespace containing the service
+        service_name: Name of the service to update
+        gateway: ClusterGateway for API access
+        service_type: New service type - one of:
+            - "ClusterIP": Internal cluster-only access
+            - "NodePort": Exposes on each node's IP
+            - "LoadBalancer": Creates cloud load balancer
+            - "ExternalName": Maps to external DNS name
+        port: New service port (external port) - optional
+        target_port: New target port (container port) - optional
+        
+    Returns:
+        Dictionary containing:
+        - name, namespace, cluster
+        - type: Service type
+        - ports: List of port mappings ["80->8080/TCP"]
+        - cluster_ip: Internal cluster IP
+        - external: External IP (for LoadBalancer type)
+        
+    Raises:
+        ValueError: If no fields provided or invalid service_type
+        ApiException: If Kubernetes API call fails
+        
+    Example:
+        # Change to LoadBalancer
+        result = update_service("gke-prod", "default", "nginx", gateway, 
+                               service_type="LoadBalancer")
+        
+        # Update ports
+        result = update_service("gke-prod", "default", "nginx", gateway,
+                               port=8080, target_port=80)
+                               
+    Security Note:
+        Changing to LoadBalancer exposes the service to the internet.
+        Ensure proper security groups/firewall rules are in place.
+    """
+    # Validate at least one field is provided
     if service_type is None and port is None and target_port is None:
         raise ValueError("At least one field must be provided: service_type, port, target_port")
 
+    # Get current service state
     core = gateway.get_core_client(cluster_name)
     svc = core.read_namespaced_service(name=service_name, namespace=namespace)
 
+    # Build patch payload
     patch: Dict[str, Any] = {"spec": {}}
+    
+    # Update service type if provided
     if service_type is not None:
         allowed = {"ClusterIP", "NodePort", "LoadBalancer", "ExternalName"}
         if service_type not in allowed:
             raise ValueError(f"service_type must be one of {sorted(allowed)}")
         patch["spec"]["type"] = service_type
 
+    # Update ports if provided
     if port is not None or target_port is not None:
         if port is not None and port <= 0:
             raise ValueError("port must be > 0")
@@ -113,6 +193,7 @@ def update_service(
         if not existing_ports:
             raise ValueError(f"Service '{service_name}' has no ports")
 
+        # Update first port mapping
         first = existing_ports[0]
         patch["spec"]["ports"] = [{
             "port": port if port is not None else first.port,
@@ -121,12 +202,14 @@ def update_service(
             "name": first.name,
         }]
 
+    # Apply the patch to Kubernetes
     try:
         core.patch_namespaced_service(name=service_name, namespace=namespace, body=patch)
     except ApiException as exc:
         logger.error("update_service failed on %s/%s in %s: %s", namespace, service_name, cluster_name, exc)
         raise
 
+    # Read back updated service
     updated = core.read_namespaced_service(name=service_name, namespace=namespace)
     return {
         "name": service_name,

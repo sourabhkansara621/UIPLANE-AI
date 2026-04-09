@@ -30,7 +30,25 @@ router = APIRouter(prefix="/api/chat", tags=["AI Chat"])
 # ── Dependency: ReadAgent ────────────────────────────────────────────────────
 
 def get_read_agent(gateway: ClusterGateway = Depends(get_gateway)) -> ReadAgent:
-    """Instantiate the ReadAgent with the shared gateway."""
+    """
+    FastAPI dependency that provides a ReadAgent instance.
+    
+    The ReadAgent is the AI brain that:
+    - Parses natural language queries
+    - Translates them to Kubernetes operations
+    - Fetches live cluster data
+    - Generates human-readable summaries
+    
+    Args:
+        gateway: ClusterGateway for accessing Kubernetes clusters
+        
+    Returns:
+        ReadAgent instance configured with the cluster gateway
+        
+    Note:
+        This is a dependency function - FastAPI will call it automatically
+        when endpoints declare agent: ReadAgent = Depends(get_read_agent)
+    """
     return ReadAgent(gateway=gateway)
 
 
@@ -44,25 +62,53 @@ def query(
     agent: ReadAgent = Depends(get_read_agent),
 ):
     """
-    Main AI query endpoint.
-
-    Send any natural-language question about your Kubernetes resources.
-    The AI will:
-      1. Parse your intent
-      2. Verify you have access to the requested application
-      3. Fetch live data from the appropriate cluster
-      4. Return a human-readable summary with structured data
-
-    Examples
-    --------
-    - "List namespaces for sandbox"
-    - "Show pods in namespace default for sandbox"
-    - "What is the resource quota in namespace default for sandbox?"
-    - "Get HPA settings in namespace default for sandbox"
-    - "Show ingress config in namespace default for sandbox"
+    Main AI-powered Kubernetes query endpoint.
+    
+    Send natural language questions about your Kubernetes resources and receive
+    intelligent, context-aware responses with live cluster data.
+    
+    Args:
+        request: ChatQueryRequest containing:
+            - query: Natural language question (e.g., "Show pods in payments-api")
+            - session_id: Optional session ID for conversation context
+            - chat_mode: One of 'k8-info', 'k8-agent', 'k8-autofix'
+        db: Database session
+        current_user: Authenticated user (determines app access)
+        agent: ReadAgent AI instance
+        
+    Returns:
+        ChatQueryResponse with:
+        - response: Human-readable answer
+        - data: Structured Kubernetes resource data (if applicable)
+        - session_id: Session ID for follow-up queries
+        - intent: Detected intent type
+        
+    Processing Flow:
+        1. AI parses the query to detect intent (list pods, get logs, etc.)
+        2. Extracts app name, namespace, and other parameters
+        3. Checks user has permission to access the app (RBAC)
+        4. Fetches live data from the appropriate Kubernetes cluster
+        5. Generates human-readable summary with AI (if available)
+        6. Logs the query in audit trail
+        
+    Example Queries:
+        - "List namespaces for sandbox"
+        - "Show pods in namespace default for sandbox"
+        - "What is the resource quota in namespace default for sandbox?"
+        - "Get HPA settings in namespace default for sandbox"
+        - "Show ingress config in namespace default for sandbox"
+        - "Get logs for pod payments-api-7d9f8-xk2p"
+        - "Describe pod auth-svc-6b8d9-qw3e"
+        
+    Chat Modes:
+        - k8-info: Read-only queries (default, safest)
+        - k8-agent: Allows write operations with confirmation
+        - k8-autofix: AI can suggest and apply fixes automatically
     """
+    # Generate or use existing session ID for conversation context
     session_id = request.session_id or str(uuid.uuid4())
 
+    # Process the query through the AI agent
     response = agent.process_query(
         query=request.query,
         user=current_user,
@@ -78,7 +124,27 @@ def get_llm_status(
     current_user: User = Depends(get_current_active_user),
     agent: ReadAgent = Depends(get_read_agent),
 ):
-    """Return active LLM provider/model status for diagnostics."""
+    """
+    Get current LLM (AI model) provider and status for diagnostics.
+    
+    This endpoint returns information about which AI backend is currently
+    being used and its availability status.
+    
+    Args:
+        current_user: Authenticated user
+        agent: ReadAgent instance
+        
+    Returns:
+        Dictionary containing:
+        - provider: AI provider name (e.g., "anthropic", "openai", "fallback")
+        - model: Model name (e.g., "claude-3-sonnet", "gpt-4")
+        - status: Availability status
+        - user: Current username
+        
+    Usage:
+        Call this to verify AI functionality or diagnose issues with
+        natural language processing.
+    """
     status = agent.get_llm_status()
     status["user"] = current_user.username
     return status
@@ -93,8 +159,30 @@ def get_chat_history(
     current_user: User = Depends(get_current_active_user),
 ):
     """
-    Return the current user's recent query history from the audit log.
-    Limited to READ actions (not mutations or logins).
+    Get the current user's recent query history from the audit log.
+    
+    Returns past queries made by this user to help with:
+    - Tracking what operations were performed
+    - Repeating previous queries
+    - Understanding user's recent activity
+    
+    Args:
+        limit: Maximum number of history items to return (capped at 100)
+        db: Database session
+        current_user: Authenticated user
+        
+    Returns:
+        List of AuditLogOut objects containing:
+        - id: Log entry ID
+        - user_id: User who made the query
+        - action: Action type (always "READ" for this endpoint)
+        - resource: Resource queried (app name, pod name, etc.)
+        - timestamp: When the query was made
+        - details: Additional query details
+        
+    Note:
+        Only returns READ actions, not mutations or login events.
+        Ordered by timestamp descending (most recent first).
     """
     logs = (
         db.query(AuditLog)
@@ -103,7 +191,7 @@ def get_chat_history(
             AuditLog.action == "READ",
         )
         .order_by(AuditLog.timestamp.desc())
-        .limit(min(limit, 100))
+        .limit(min(limit, 100))  # Cap at 100 to prevent abuse
         .all()
     )
     return logs

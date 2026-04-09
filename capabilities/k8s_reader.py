@@ -49,7 +49,22 @@ logger = logging.getLogger(__name__)
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _age(timestamp) -> str:
-    """Convert a K8s timestamp to a human-readable age string."""
+    """
+    Convert a Kubernetes timestamp to a human-readable age string.
+    
+    Args:
+        timestamp: Kubernetes datetime object (typically from metadata.creation_timestamp)
+        
+    Returns:
+        Human-readable age string like "5d", "3h", "45m"
+        Returns "unknown" if timestamp is None
+        
+    Examples:
+        - 5 days old: "5d"
+        - 3 hours old: "3h"
+        - 45 minutes old: "45m"
+        - Less than a minute old: "0m"
+    """
     if timestamp is None:
         return "unknown"
     now = datetime.now(timezone.utc)
@@ -64,18 +79,42 @@ def _age(timestamp) -> str:
 
 
 def _parse_resource(value: Optional[str]) -> Optional[float]:
-    """Parse K8s resource string (e.g. '500m', '1Gi') to float."""
+    """
+    Parse Kubernetes resource string to a numeric value.
+    
+    Handles Kubernetes resource formats:
+    - CPU: "500m" (millicores), "2" (cores)
+    - Memory: "512Mi", "2Gi", "1024Ki"
+    
+    Args:
+        value: Kubernetes resource string (e.g., "500m", "2Gi")
+        
+    Returns:
+        Parsed numeric value, or None if invalid/missing
+        
+    Examples:
+        - "500m" -> 0.5 (millicores to cores)
+        - "2Gi" -> 2147483648.0 (bytes)
+        - "512Mi" -> 536870912.0 (bytes)
+        - "1024" -> 1024.0
+    """
     if value is None:
         return None
     value = str(value).strip()
+    
+    # CPU millicores (e.g., "500m" = 0.5 cores)
     if value.endswith("m"):
         return float(value[:-1]) / 1000
+    
+    # Memory units
     if value.endswith("Ki"):
         return float(value[:-2]) * 1024
     if value.endswith("Mi"):
         return float(value[:-2]) * 1024 ** 2
     if value.endswith("Gi"):
         return float(value[:-2]) * 1024 ** 3
+    
+    # Plain number
     try:
         return float(value)
     except ValueError:
@@ -90,13 +129,37 @@ def list_namespaces(
     app_name: Optional[str] = None,
 ) -> List[NamespaceInfo]:
     """
-    List all namespaces on a cluster.
-    Optionally filter by label app=<app_name>.
+    List all namespaces in a Kubernetes cluster.
+    
+    Optionally filter by application using label selectors.
+    
+    Args:
+        cluster_name: Name of the cluster to query
+        gateway: ClusterGateway for API access
+        app_name: Optional - filter to namespaces labeled with app=<app_name>
+        
+    Returns:
+        List of NamespaceInfo objects containing:
+        - name: Namespace name
+        - status: Active/Terminating
+        - app_name: Value from app label
+        - cluster_name: Which cluster it's from
+        - environment: Value from env label
+        - labels: All namespace labels
+        
+    Example:
+        namespaces = list_namespaces("gke-prod", gateway)
+        # Returns all namespaces in gke-prod cluster
+        
+        app_namespaces = list_namespaces("gke-prod", gateway, app_name="payments-api")
+        # Returns only namespaces labeled with app=payments-api
     """
     try:
         core = gateway.get_core_client(cluster_name)
+        # Build label selector if app_name provided
         label_selector = f"app={app_name}" if app_name else None
         ns_list = core.list_namespace(label_selector=label_selector)
+        
         results = []
         for ns in ns_list.items:
             labels = ns.metadata.labels or {}
@@ -168,8 +231,36 @@ def list_pods(
     label_selector: Optional[str] = None,
 ) -> List[PodInfo]:
     """
-    List all pods in a namespace.
-    Returns clean PodInfo objects — no raw K8s types.
+    List all pods in a namespace with detailed status information.
+    
+    Returns clean, structured pod data suitable for display or further processing.
+    No raw Kubernetes objects leak out - everything is converted to PodInfo schema.
+    
+    Args:
+        cluster_name: Name of the Kubernetes cluster
+        namespace: Namespace to query
+        gateway: ClusterGateway for API access
+        label_selector: Optional Kubernetes label selector (e.g., "app=payments-api,tier=backend")
+        
+    Returns:
+        List of PodInfo objects containing:
+        - name, namespace, status (Running/Pending/Failed/etc.)
+        - ready: "2/2" (ready containers / total containers)
+        - restarts: Total restart count across all containers
+        - cpu_request, memory_request: Resource requests
+        - image: Container image (from first container)
+        - node: Which node the pod is running on
+        - age: Human-readable age ("5d", "3h", "45m")
+        
+    Example:
+        # Get all pods in a namespace
+        pods = list_pods("gke-prod", "default", gateway)
+        
+        # Get pods with specific label
+        pods = list_pods("gke-prod", "default", gateway, label_selector="app=nginx")
+        
+    Note:
+        Returns empty list on errors (logs error but doesn't raise exception).
     """
     try:
         core = gateway.get_core_client(cluster_name)
@@ -177,6 +268,7 @@ def list_pods(
             namespace=namespace,
             label_selector=label_selector,
         )
+        # Convert each pod to clean PodInfo schema
         return [_pod_to_info(pod, cluster_name) for pod in pod_list.items]
     except ApiException as exc:
         logger.error("list_pods failed on %s/%s: %s", cluster_name, namespace, exc)
@@ -184,7 +276,26 @@ def list_pods(
 
 
 def _pod_to_info(pod: V1Pod, cluster_name: str) -> PodInfo:
-    """Convert a raw V1Pod into a clean PodInfo schema."""
+    """
+    Convert a raw Kubernetes V1Pod object into a clean PodInfo schema.
+    
+    This internal function extracts and formats key pod information:
+    - Container status and readiness
+    - Resource requests (CPU/memory from first container)
+    - Restart counts (summed across all containers)
+    - Current node assignment
+    - Age calculation
+    
+    Args:
+        pod: Raw V1Pod object from Kubernetes API
+        cluster_name: Name of source cluster (added to PodInfo)
+        
+    Returns:
+        PodInfo object with all relevant pod details in a clean format
+        
+    Note:
+        This is an internal helper - use list_pods() for public API.
+    """
     containers = pod.spec.containers or []
     image = containers[0].image if containers else "unknown"
 
@@ -229,8 +340,37 @@ def get_pod_logs(
     previous: bool = False,
 ) -> str:
     """
-    Fetch recent logs from a pod.
-    Set previous=True to get logs from the last crashed container.
+    Fetch recent logs from a pod container.
+    
+    Equivalent to: kubectl logs <pod_name> --tail=<tail_lines>
+    
+    Args:
+        cluster_name: Name of the Kubernetes cluster
+        namespace: Namespace containing the pod
+        pod_name: Name of the pod
+        gateway: ClusterGateway for API access
+        tail_lines: Number of recent log lines to fetch (default: 100)
+        container: Specific container name (optional - uses first container if not specified)
+        previous: If True, get logs from previous (crashed) container instance
+        
+    Returns:
+        Log output as a string, or error message if fetch fails
+        Returns "(no log output)" if pod has no logs
+        
+    Use Cases:
+        - Debugging application errors
+        - Checking startup logs
+        - Investigating crashes (use previous=True)
+        
+    Example:
+        # Get last 100 lines from a pod
+        logs = get_pod_logs("gke-prod", "default", "nginx-abc123", gateway)
+        
+        # Get logs from crashed container
+        crash_logs = get_pod_logs("gke-prod", "default", "nginx-abc123", gateway, previous=True)
+        
+        # Get last 500 lines
+        logs = get_pod_logs("gke-prod", "default", "nginx-abc123", gateway, tail_lines=500)
     """
     try:
         core = gateway.get_core_client(cluster_name)
@@ -239,7 +379,7 @@ def get_pod_logs(
             namespace=namespace,
             tail_lines=tail_lines,
             container=container,
-            previous=previous,
+            previous=previous,  # Get logs from previous crashed container
         )
         return logs or "(no log output)"
     except ApiException as exc:
@@ -253,7 +393,47 @@ def describe_pod(
     pod_name: str,
     gateway: ClusterGateway,
 ) -> Dict[str, Any]:
-    """Return a dict with key pod details (equivalent to kubectl describe pod)."""
+    """
+    Get detailed pod information equivalent to 'kubectl describe pod'.
+    
+    Returns comprehensive pod details including:
+    - Container states and reasons
+    - Resource requests and limits
+    - Events and conditions
+    - Volume mounts and environment variables
+    
+    Args:
+        cluster_name: Name of the Kubernetes cluster
+        namespace: Namespace containing the pod
+        pod_name: Name of the pod to describe
+        gateway: ClusterGateway for API access
+        
+    Returns:
+        Dictionary containing:
+        - name, namespace, status, ip, node
+        - containers: List of container details with:
+            - name, image, state, restart_count
+            - resources (requests/limits)
+            - state_reason, state_message
+            - last_state (for crashed containers)
+        - conditions: Pod conditions (Ready, Initialized, etc.)
+        - volumes: Volume mounts
+        - node_name, host_ip, pod_ip
+        - age, labels, annotations
+        
+    Example:
+        info = describe_pod("gke-prod", "default", "nginx-abc123", gateway)
+        print(f"Pod Status: {info['status']}")
+        print(f"Containers: {len(info['containers'])}")
+        for container in info['containers']:
+            print(f"  {container['name']}: {container['state']}")
+            
+    Use Cases:
+        - Debugging pod startup issues
+        - Investigating container crashes
+        - Checking resource allocations
+        - Understanding pod scheduling decisions
+    """
     try:
         core = gateway.get_core_client(cluster_name)
         api_client = ApiClient()

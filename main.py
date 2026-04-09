@@ -106,8 +106,8 @@ app.add_middleware(
 # ── Static files ──────────────────────────────────────────────────────────────
 
 static_dir = Path(__file__).parent / "ui" / "static"
-if static_dir.exists():
-    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+static_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 # ── API Routers ───────────────────────────────────────────────────────────────
 

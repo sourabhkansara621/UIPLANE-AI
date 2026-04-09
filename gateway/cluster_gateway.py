@@ -54,10 +54,37 @@ class ClusterGateway:
 
     def load_clusters(self) -> None:
         """
-        Load all kubeconfigs from the paths listed in settings.
-        Each file may contain multiple contexts; each context becomes one cluster entry.
-        Falls back to in-cluster config when running inside a Pod.
+        Load all Kubernetes cluster configurations from kubeconfig files.
+        
+        This initialization function:
+        1. Checks if running in-cluster (inside a Kubernetes pod)
+        2. If not, loads kubeconfig files from configured paths
+        3. Extracts all contexts from each kubeconfig
+        4. Creates one ApiClient per cluster context
+        5. Optionally loads clusters from MCP (Multi-Cluster Platform) endpoints
+        
+        Configuration Sources:
+            - K8S_USE_IN_CLUSTER: If true, uses in-cluster service account
+            - K8S_KUBECONFIG_PATHS: Comma-separated paths to kubeconfig files
+            - MCP_ENABLED: If true, fetches additional clusters from MCP
+            - MCP_CLUSTER_ENDPOINTS: Comma-separated MCP endpoint URLs
+            
+        Process:
+            Each kubeconfig file may contain multiple contexts (clusters).
+            Each context becomes a named cluster in the gateway.
+            
+        Example:
+            If kubeconfig has contexts ["gke-prod", "eks-staging"],
+            both become available as cluster names.
+            
+        Raises:
+            Logs errors but doesn't fail - continues loading other clusters.
+            
+        Note:
+            This should be called once during application startup.
+            Call get_gateway() dependency to access the singleton instance.
         """
+        # In-cluster mode: running inside a Kubernetes pod
         if settings.k8s_use_in_cluster:
             try:
                 k8s_config.load_incluster_config()
@@ -69,6 +96,7 @@ class ClusterGateway:
             self._loaded = True
             return
 
+        # Load from kubeconfig file paths
         kubeconfig_paths = [
             p.strip()
             for p in settings.k8s_kubeconfig_paths.split(",")
@@ -85,6 +113,7 @@ class ClusterGateway:
             except Exception as exc:
                 logger.error("Error loading kubeconfig %s: %s", kubeconfig_path, exc)
 
+        # Load clusters from MCP endpoints if enabled
         if settings.mcp_enabled:
             self._load_clusters_from_mcp_endpoints()
 
@@ -92,7 +121,26 @@ class ClusterGateway:
         logger.info("Gateway ready — %d cluster(s) loaded", len(self._clients))
 
     def _load_contexts_from_file(self, kubeconfig_file: str) -> None:
+        """
+        Load all contexts from a kubeconfig file and create API clients.
+        
+        Args:
+            kubeconfig_file: Path to the kubeconfig YAML file
+            
+        Process:
+            1. Parse kubeconfig to extract all contexts
+            2. For each context, load its configuration
+            3. Create an ApiClient for that context
+            4. Store in _clients dict with context name as key
+            
+        Example:
+            If kubeconfig has contexts ["prod-cluster", "dev-cluster"],
+            creates self._clients["prod-cluster"] and self._clients["dev-cluster"]
+        """
+        # List all contexts in the file
         contexts, _active = k8s_config.list_kube_config_contexts(config_file=kubeconfig_file)
+        
+        # Load each context as a separate cluster
         for ctx in contexts:
             cluster_name = ctx["name"]
             k8s_config.load_kube_config(config_file=kubeconfig_file, context=cluster_name)
@@ -169,32 +217,132 @@ class ClusterGateway:
         return self._clients[cluster_name]
 
     def get_core_client(self, cluster_name: str) -> CoreV1Api:
-        """Return CoreV1Api (pods, namespaces, services, configmaps...)."""
+        """
+        Get Kubernetes CoreV1Api client for a specific cluster.
+        
+        CoreV1Api provides access to core resources:
+        - Pods, Services, ConfigMaps, Secrets
+        - Namespaces, Nodes, PersistentVolumes
+        - ResourceQuotas, LimitRanges
+        
+        Args:
+            cluster_name: Name of the cluster (context name from kubeconfig)
+            
+        Returns:
+            CoreV1Api instance for making Kubernetes API calls
+            
+        Raises:
+            KeyError: If cluster_name not found in loaded clusters
+            
+        Usage:
+            core = gateway.get_core_client("gke-prod")
+            pods = core.list_namespaced_pod(namespace="default")
+        """
         return CoreV1Api(self._get_api_client(cluster_name))
 
     def get_apps_client(self, cluster_name: str) -> AppsV1Api:
-        """Return AppsV1Api (deployments, replicasets, statefulsets...)."""
+        """
+        Get Kubernetes AppsV1Api client for a specific cluster.
+        
+        AppsV1Api provides access to application resources:
+        - Deployments, ReplicaSets, StatefulSets
+        - DaemonSets, ControllerRevisions
+        
+        Args:
+            cluster_name: Name of the cluster
+            
+        Returns:
+            AppsV1Api instance for managing application workloads
+            
+        Raises:
+            KeyError: If cluster_name not found
+            
+        Usage:
+            apps = gateway.get_apps_client("gke-prod")
+            deps = apps.list_namespaced_deployment(namespace="default")
+        """
         return AppsV1Api(self._get_api_client(cluster_name))
 
     def get_autoscaling_client(self, cluster_name: str) -> AutoscalingV1Api:
-        """Return AutoscalingV1Api (HPA)."""
+        """
+        Get Kubernetes AutoscalingV1Api client for a specific cluster.
+        
+        AutoscalingV1Api provides access to:
+        - HorizontalPodAutoscaler (HPA) resources
+        
+        Args:
+            cluster_name: Name of the cluster
+            
+        Returns:
+            AutoscalingV1Api instance for autoscaling management
+            
+        Raises:
+            KeyError: If cluster_name not found
+            
+        Usage:
+            autoscaling = gateway.get_autoscaling_client("gke-prod")
+            hpas = autoscaling.list_namespaced_horizontal_pod_autoscaler(namespace="default")
+        """
         return AutoscalingV1Api(self._get_api_client(cluster_name))
 
     def get_networking_client(self, cluster_name: str) -> NetworkingV1Api:
-        """Return NetworkingV1Api (Ingress, NetworkPolicy)."""
+        """
+        Get Kubernetes NetworkingV1Api client for a specific cluster.
+        
+        NetworkingV1Api provides access to networking resources:
+        - Ingress, IngressClass
+        - NetworkPolicy
+        
+        Args:
+            cluster_name: Name of the cluster
+            
+        Returns:
+            NetworkingV1Api instance for network configuration
+            
+        Raises:
+            KeyError: If cluster_name not found
+            
+        Usage:
+            networking = gateway.get_networking_client("gke-prod")
+            ingresses = networking.list_namespaced_ingress(namespace="default")
+        """
         return NetworkingV1Api(self._get_api_client(cluster_name))
 
     # ── Discovery ─────────────────────────────────────────────────────────────
 
     def list_clusters(self) -> List[str]:
-        """Return names of all loaded clusters."""
+        """
+        Get names of all loaded Kubernetes clusters.
+        
+        Returns:
+            List of cluster names (context names) currently available
+            
+        Example:
+            ["gke-prod-us-east", "eks-staging-eu-west", "in-cluster"]
+            
+        Usage:
+            Useful for UI dropdowns or validating cluster names before operations.
+        """
         return list(self._clients.keys())
 
     def test_connection(self, cluster_name: str) -> bool:
-        """Ping a cluster. Returns True if reachable."""
+        """
+        Test if a cluster is reachable and responding.
+        
+        Makes a lightweight API call (list namespaces) to verify connectivity.
+        
+        Args:
+            cluster_name: Name of cluster to test
+            
+        Returns:
+            True if cluster responds, False if unreachable or not loaded
+            
+        Usage:
+            Health checks, cluster status dashboards, diagnostics
+        """
         try:
             core = self.get_core_client(cluster_name)
-            core.list_namespace(_request_timeout=5)
+            core.list_namespace(_request_timeout=5)  # 5 second timeout
             return True
         except (ApiException, KeyError, Exception):
             return False
@@ -203,8 +351,32 @@ class ClusterGateway:
         self, app_name: str, db: Session
     ) -> List[ClusterRegistry]:
         """
-        Look up the cluster registry and return all entries for an app.
-        This is how the AI knows "payments-api lives in gke-prod-us-east".
+        Find all clusters where an application is deployed.
+        
+        Queries the ClusterRegistry database to discover where an app lives.
+        An application can be deployed across multiple clusters/environments.
+        
+        Args:
+            app_name: Application name (e.g., 'payments-api')
+            db: Database session for registry lookup
+            
+        Returns:
+            List of ClusterRegistry entries showing:
+            - cluster_name: Which cluster it's in
+            - namespace: Which namespace
+            - environment: prod, staging, etc.
+            - cloud_provider: GKE, EKS, AKS, etc.
+            
+        Example:
+            For "payments-api" might return:
+            [
+                ClusterRegistry(cluster="gke-prod", namespace="payments-prod", env="prod"),
+                ClusterRegistry(cluster="eks-staging", namespace="payments-staging", env="staging")
+            ]
+            
+        Note:
+            This is how the AI knows where to look for an application's resources.
+            The ClusterRegistry must be populated (manually or via discovery).
         """
         return (
             db.query(ClusterRegistry)
@@ -218,7 +390,21 @@ class ClusterGateway:
     def get_cluster_for_app_env(
         self, app_name: str, environment: str, db: Session
     ) -> Optional[ClusterRegistry]:
-        """Return the single registry entry for app + environment."""
+        """
+        Get the specific cluster entry for an app in a given environment.
+        
+        Args:
+            app_name: Application name
+            environment: Environment name (prod, staging, nonprod, etc.)
+            db: Database session
+            
+        Returns:
+            ClusterRegistry entry if found, None otherwise
+            
+        Usage:
+            When you need a specific environment, not all deployments:
+            prod_cluster = gateway.get_cluster_for_app_env("payments-api", "prod", db)
+        """
         return (
             db.query(ClusterRegistry)
             .filter(
@@ -230,7 +416,15 @@ class ClusterGateway:
         )
 
     def get_connected_count(self) -> int:
-        """Return number of clusters with loaded clients."""
+        """
+        Get number of successfully loaded clusters.
+        
+        Returns:
+            Count of clusters with active API clients
+            
+        Usage:
+            Health checks, startup verification, monitoring
+        """
         return len(self._clients)
 
 
@@ -241,8 +435,28 @@ _gateway_instance: Optional[ClusterGateway] = None
 
 def get_gateway() -> ClusterGateway:
     """
-    FastAPI dependency / module accessor.
-    Returns the singleton ClusterGateway, initialising it on first call.
+    Get the singleton ClusterGateway instance (FastAPI dependency).
+    
+    This is the main entry point for accessing Kubernetes clusters.
+    The gateway is initialized once on first call and reused for all requests.
+    
+    Returns:
+        ClusterGateway singleton with all clusters loaded
+        
+    Usage in FastAPI endpoints:
+        @router.get("/pods")
+        def get_pods(gateway: ClusterGateway = Depends(get_gateway)):
+            core = gateway.get_core_client("gke-prod")
+            return core.list_namespaced_pod(namespace="default")
+            
+    Architecture:
+        - Singleton pattern ensures one gateway per application instance
+        - Automatically loads clusters on first access
+        - All Kubernetes operations must go through this gateway
+        - Never instantiate ClusterGateway directly - always use get_gateway()
+        
+    Note:
+        Thread-safe singleton - safe to call from multiple FastAPI workers.
     """
     global _gateway_instance
     if _gateway_instance is None:

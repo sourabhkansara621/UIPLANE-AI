@@ -1,0 +1,15 @@
+Selection of the env -->>.\venv\Scripts\Activate.ps1
+
+
+Starting app--->>  uvicorn main:app --reload --host 0.0.0.0 --port 8080
+
+http://localhost:8080
+
+http://localhost:8080/docs
+
+
+stoping app--> ctrl+c
+
+
+
+select namespace should be higlighted 
