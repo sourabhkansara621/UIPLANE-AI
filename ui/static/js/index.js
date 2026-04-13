@@ -6,6 +6,9 @@
     let namespaceFilter = '';
     let cachedNamespaces = [];
     let selectedNamespace = null;
+    let selectedApp = localStorage.getItem('k8sai_selected_app') || null;
+    let selectedCluster = localStorage.getItem('k8sai_selected_cluster') || null;
+    let cachedClusterEntries = [];
     let chatMode = localStorage.getItem('k8sai_chat_mode') || 'k8-info';
 
     // Deployment editor state
@@ -187,25 +190,120 @@
       const list = document.getElementById('app-list');
       const apps = currentUser.allowed_apps.includes('*')
         ? ['all apps (admin)'] : currentUser.allowed_apps;
-      list.innerHTML = apps.map(a =>
-        `<div class="app-chip" onclick="fillQuery('list namespaces for ${a}')">
+      list.innerHTML = apps.map(a => {
+        const active = selectedApp === a ? ' active' : '';
+        const appEsc = (a || '').replace(/'/g, "\\'");
+        return `<div class="app-chip${active}" onclick="selectApp('${appEsc}')">
       <span class="dot-s"></span>${a}
-    </div>`
-      ).join('');
+    </div>`;
+      }).join('');
+    }
+
+    async function selectApp(appName) {
+      if (appName === 'all apps (admin)') {
+        selectedApp = null;
+        localStorage.removeItem('k8sai_selected_app');
+        selectedCluster = null;
+        localStorage.removeItem('k8sai_selected_cluster');
+        await loadClusters();
+        renderApps();
+        await loadNamespaces();
+        await loadSuggestions();
+        return;
+      }
+
+      if (selectedApp === appName) {
+        selectedApp = null;
+        localStorage.removeItem('k8sai_selected_app');
+        selectedCluster = null;
+        localStorage.removeItem('k8sai_selected_cluster');
+        await loadClusters();
+        renderApps();
+        await loadNamespaces();
+        await loadSuggestions();
+        return;
+      }
+
+      selectedApp = appName;
+      localStorage.setItem('k8sai_selected_app', appName);
+
+      // Keep cluster highlight in sync when app has a mapped cluster.
+      const mapped = cachedClusterEntries.find(e => e.app_name === appName);
+      if (mapped?.cluster_name) {
+        selectedCluster = mapped.cluster_name;
+        localStorage.setItem('k8sai_selected_cluster', selectedCluster);
+        await loadClusters();
+      }
+
+      renderApps();
+      fillQuery(`list namespaces for ${appName}`);
+      await sendQuery();
     }
 
     async function loadClusters() {
       try {
         const res = await fetch(`${API}/api/registry/clusters`, { headers: authHeaders() });
         const entries = await res.json();
+        cachedClusterEntries = Array.isArray(entries) ? entries : [];
+        const byCluster = new Map();
+        const filteredEntries = selectedApp
+          ? cachedClusterEntries.filter(entry => entry.app_name === selectedApp)
+          : cachedClusterEntries;
+        for (const entry of filteredEntries) {
+          if (!byCluster.has(entry.cluster_name)) byCluster.set(entry.cluster_name, entry);
+        }
+        const clusterRows = Array.from(byCluster.values()).slice(0, 20);
+
+        // Reset invalid persisted cluster selection.
+        if (selectedCluster && !byCluster.has(selectedCluster)) {
+          selectedCluster = null;
+          localStorage.removeItem('k8sai_selected_cluster');
+        }
+
         const list = document.getElementById('cluster-list');
-        list.innerHTML = entries.slice(0, 10).map(e =>
-          `<div class="cluster-entry">
-        <div class="cluster-name">${e.cluster_name}<span class="env-tag env-${e.environment === 'prod' ? 'prod' : 'nonprod'}">${e.environment}</span></div>
+        list.innerHTML = clusterRows.map(e => {
+          const active = selectedCluster === e.cluster_name ? ' active' : '';
+          const clusterNameEsc = (e.cluster_name || '').replace(/'/g, "\\'");
+          return `<div class="cluster-entry${active}" onclick="selectCluster('${clusterNameEsc}')">
+        <div class="cluster-top-row">
+          <div class="cluster-name">${e.cluster_name} <span class="env-tag env-${e.environment === 'prod' ? 'prod' : 'nonprod'}">${e.environment}</span></div>
+          ${selectedCluster === e.cluster_name ? '<span class="cluster-check" aria-hidden="true"></span>' : ''}
+        </div>
         <div class="cluster-meta">${e.cloud_provider} | ${e.region}</div>
-      </div>`
-        ).join('');
+      </div>`;
+        }).join('');
       } catch { /* silently skip if registry empty */ }
+    }
+
+    async function selectCluster(clusterName) {
+      // Toggle off if user clicks the same selected cluster.
+      if (selectedCluster === clusterName) {
+        selectedCluster = null;
+        localStorage.removeItem('k8sai_selected_cluster');
+        selectedApp = null;
+        localStorage.removeItem('k8sai_selected_app');
+        await loadClusters();
+        renderApps();
+        await loadNamespaces();
+        await loadSuggestions();
+        return;
+      }
+
+      selectedCluster = clusterName;
+      localStorage.setItem('k8sai_selected_cluster', clusterName);
+      await loadClusters();
+      await loadNamespaces();
+      await loadSuggestions();
+
+      // Open cluster-specific details by querying for the first app mapped to this cluster.
+      const mapped = cachedClusterEntries.find(e => e.cluster_name === clusterName);
+      if (mapped?.app_name) {
+        selectedApp = mapped.app_name;
+        localStorage.setItem('k8sai_selected_app', selectedApp);
+        renderApps();
+        fillQuery(`list namespaces for ${mapped.app_name}`);
+        await sendQuery();
+      }
     }
 
     async function loadSuggestions() {
@@ -219,22 +317,193 @@
         const nsBadge = document.getElementById('namespace-badge');
         const nsText = data.selected_namespace || 'not selected';
         const appText = data.selected_app ? ` | App: ${data.selected_app}` : '';
-        if (nsBadge) nsBadge.textContent = `Active Namespace: ${nsText}${appText}`;
+        const clusterText = selectedCluster ? ` | Cluster: ${selectedCluster}` : '';
+        if (nsBadge) nsBadge.textContent = `Active Namespace: ${nsText}${appText}${clusterText}`;
+
+        if (data.selected_app) {
+          selectedApp = data.selected_app;
+          localStorage.setItem('k8sai_selected_app', selectedApp);
+          renderApps();
+        }
         const row = document.getElementById('suggestions');
         const source = Array.isArray(data.suggestions) ? data.suggestions : [];
         const menuCmd = 'main menu';
         const withoutMenu = source.filter(s => (s || '').toLowerCase() !== menuCmd);
         const visible = [menuCmd, ...withoutMenu].slice(0, 6);
         row.innerHTML = visible.map(s => {
-          const cls = s.toLowerCase() === menuCmd ? 'sug-btn sug-main' : 'sug-btn';
+          const lower = (s || '').toLowerCase();
+          const cls = lower === menuCmd ? 'sug-btn sug-main' : 'sug-btn';
           return `<button class="${cls}" onclick="fillQuery('${s}')">${s}</button>`;
         }).join('');
       } catch { }
     }
 
+    async function openGeneralQuestion() {
+      const input = document.getElementById('chat-input');
+      if (!input) return;
+      const current = (input.value || '').trim();
+      if (!current) {
+        input.value = 'general: ';
+      } else if (!/^\s*(general|llm)\s*:/i.test(current)) {
+        input.value = `general: ${current}`;
+      }
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+      addMsg('ai', 'General question mode enabled. Type your question and press Send.');
+    }
+
+    // ── Upgrade K8s Modal Functions ────
+    let selectedUpgradeVersion = null;
+
+    async function openUpgradeModal() {
+      if (!selectedCluster) {
+        alert('Please select a cluster first');
+        return;
+      }
+      
+      selectedUpgradeVersion = null;
+      document.getElementById('upgrade-modal').style.display = 'flex';
+      document.getElementById('upgrade-cluster-name').textContent = selectedCluster;
+      
+      // Load current version and available versions
+      await loadUpgradeVersions();
+    }
+
+    function closeUpgradeModal() {
+      document.getElementById('upgrade-modal').style.display = 'none';
+      selectedUpgradeVersion = null;
+      document.getElementById('selected-upgrade-version').textContent = 'No version selected';
+      document.getElementById('upgrade-action-btn').disabled = true;
+      document.getElementById('upgrade-action-btn').textContent = 'Select Version';
+    }
+
+    async function loadUpgradeVersions() {
+      try {
+        const response = await fetch(`${API}/api/k8s/upgrade/${encodeURIComponent(selectedCluster)}/versions`, {
+          headers: authHeaders(),
+        });
+        
+        if (!response.ok) throw new Error('Failed to fetch versions');
+        
+        const data = await response.json();
+        const currentVersion = data.current_version || 'unknown';
+        const availableVersions = data.available_versions || [];
+        
+        // Display current version in header
+        const currentVersionDiv = document.getElementById('current-version');
+        if (currentVersion === 'unknown') {
+          currentVersionDiv.innerHTML = `
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span style="color:var(--muted); font-size:0.85rem;">Current:</span>
+              <strong style="font-size:1.1rem; color:var(--danger);">Unavailable</strong>
+            </div>
+          `;
+          document.getElementById('available-versions').innerHTML =
+            '<div style="color:var(--muted); font-size:0.9rem; text-align:center; padding:20px;">Unable to detect current cluster version. Please try again.</div>';
+          return;
+        }
+
+        currentVersionDiv.innerHTML = `
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="color:var(--muted); font-size:0.85rem;">Current:</span>
+            <strong style="font-size:1.1rem;">${currentVersion}</strong>
+          </div>
+        `;
+        
+        // Display available upgrade versions
+        const versionsContainer = document.getElementById('available-versions');
+        if (availableVersions.length === 0) {
+          versionsContainer.innerHTML = '<div style="color:var(--muted); font-size:0.9rem; text-align:center; padding:20px;">✓ Already on latest version</div>';
+        } else {
+          versionsContainer.innerHTML = `
+            <div style="color:var(--muted); font-size:0.85rem; margin-bottom:12px; padding:0 4px;">Available upgrades:</div>
+            ${availableVersions.map(v => `
+              <button class="version-btn" onclick="selectUpgradeVersion('${v}', this)">
+                <strong style="font-size:1rem;">v${v}</strong>
+                <span style="display:block; color:var(--muted); font-size:0.8rem; margin-top:2px;">Newer than ${currentVersion}</span>
+              </button>
+            `).join('')}
+          `;
+        }
+      } catch (error) {
+        console.error('Error loading upgrade versions:', error);
+        document.getElementById('available-versions').innerHTML = '<div style="color:var(--danger); font-size:0.9rem;">Failed to load versions</div>';
+      }
+    }
+
+    function selectUpgradeVersion(version, element) {
+      // Deselect previous
+      document.querySelectorAll('.version-btn.selected').forEach(btn => btn.classList.remove('selected'));
+      
+      // Select new
+      selectedUpgradeVersion = version;
+      element.classList.add('selected');
+      document.getElementById('selected-upgrade-version').textContent = `v${version}`;
+      
+      // Enable upgrade button
+      const upgradeBtn = document.getElementById('upgrade-action-btn');
+      upgradeBtn.disabled = false;
+      upgradeBtn.textContent = `Upgrade to v${version}`;
+    }
+
+    async function confirmUpgrade() {
+      if (!selectedUpgradeVersion || !selectedCluster) {
+        alert('Please select a version');
+        return;
+      }
+      
+      const confirmed = confirm(`Are you sure you want to upgrade cluster "${selectedCluster}" to version v${selectedUpgradeVersion}?\n\nThis operation may cause brief downtime.`);
+      if (!confirmed) return;
+      
+      try {
+        document.getElementById('upgrade-action-btn').disabled = true;
+        document.getElementById('upgrade-action-btn').textContent = 'Upgrading...';
+        
+        const response = await fetch(`${API}/api/k8s/upgrade/${encodeURIComponent(selectedCluster)}`, {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({
+            target_version: selectedUpgradeVersion,
+          }),
+        });
+        
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.detail || 'Upgrade failed');
+        }
+        
+        const result = await response.json();
+        alert(`Upgrade initiated successfully!\n\nStatus: ${result.status}\n\nCheck cluster status for progress.`);
+        
+        // Log audit
+        auditLog('UPGRADE_CLUSTER', 'cluster', selectedCluster, {
+          target_version: selectedUpgradeVersion,
+          result_summary: `Cluster upgrade to v${selectedUpgradeVersion} initiated`,
+          success: true
+        });
+        
+        closeUpgradeModal();
+      } catch (error) {
+        console.error('Upgrade error:', error);
+        alert(`Upgrade failed: ${error.message}`);
+        
+        auditLog('UPGRADE_CLUSTER', 'cluster', selectedCluster, {
+          target_version: selectedUpgradeVersion,
+          result_summary: `Cluster upgrade failed: ${error.message}`,
+          success: false
+        });
+        
+        document.getElementById('upgrade-action-btn').disabled = false;
+        document.getElementById('upgrade-action-btn').textContent = `Upgrade to v${selectedUpgradeVersion}`;
+      }
+    }
+
     async function loadNamespaces() {
       try {
-        const qp = chatSessionId ? `?session_id=${encodeURIComponent(chatSessionId)}` : '';
+        const params = [];
+        if (chatSessionId) params.push(`session_id=${encodeURIComponent(chatSessionId)}`);
+        if (selectedCluster) params.push(`cluster_name=${encodeURIComponent(selectedCluster)}`);
+        const qp = params.length ? `?${params.join('&')}` : '';
         const res = await fetch(`${API}/api/chat/namespaces${qp}`, { headers: authHeaders() });
         const data = await res.json();
         cachedNamespaces = data.namespaces || [];
@@ -716,8 +985,7 @@
           }, 300);
         }
 
-        await loadSuggestions();
-        await loadNamespaces();
+        await Promise.all([loadSuggestions(), loadNamespaces()]);
       } catch (e) {
         removeThinking();
         addMsg('ai', `Error: ${e.message}`);

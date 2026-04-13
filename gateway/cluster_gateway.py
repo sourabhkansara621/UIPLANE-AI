@@ -115,10 +115,31 @@ class ClusterGateway:
 
         # Load clusters from MCP endpoints if enabled
         if settings.mcp_enabled:
+            self._load_clusters_from_mcp_local_kubeconfigs()
             self._load_clusters_from_mcp_endpoints()
 
         self._loaded = True
         logger.info("Gateway ready — %d cluster(s) loaded", len(self._clients))
+
+    def _load_clusters_from_mcp_local_kubeconfigs(self) -> None:
+        """Load local kubeconfig paths configured for MCP provider clients."""
+        provider_paths = []
+        for raw_paths in (
+            settings.mcp_gke_kubeconfig_paths,
+            settings.mcp_eks_kubeconfig_paths,
+            settings.mcp_aks_kubeconfig_paths,
+        ):
+            provider_paths.extend([p.strip() for p in raw_paths.split(",") if p.strip()])
+
+        for kubeconfig_path in provider_paths:
+            path = Path(kubeconfig_path)
+            if not path.exists():
+                logger.warning("MCP kubeconfig not found: %s", kubeconfig_path)
+                continue
+            try:
+                self._load_contexts_from_file(str(path))
+            except Exception as exc:
+                logger.error("Error loading MCP kubeconfig %s: %s", kubeconfig_path, exc)
 
     def _load_contexts_from_file(self, kubeconfig_file: str) -> None:
         """

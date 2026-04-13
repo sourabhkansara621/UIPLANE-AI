@@ -28,9 +28,11 @@ check_network_policy(cluster_name, namespace, gateway)          -> List[dict]
 """
 
 import logging
+import re
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 
+from kubernetes import client
 from kubernetes.client import ApiException, ApiClient
 from kubernetes.client.models import (
     V1Pod, V1Namespace, V1Deployment,
@@ -1025,13 +1027,42 @@ def get_k8s_version(cluster_name: str, gateway: ClusterGateway) -> str:
     """Return the Kubernetes server version string for a cluster."""
     try:
         api_client = gateway._get_api_client(cluster_name)
-        version_api = gateway.get_core_client(cluster_name)
-        info = version_api.api_client.call_api(
-            "/version", "GET",
-            response_type="VersionInfo",
-            _return_http_data_only=True,
-        )
-        return f"{info.major}.{info.minor}"
+        version_api = client.VersionApi(api_client)
+        info = version_api.get_code()
+
+        major = str(getattr(info, "major", "")).strip()
+        minor_raw = str(getattr(info, "minor", "")).strip()
+        minor_digits = "".join(ch for ch in minor_raw if ch.isdigit())
+        if major.isdigit() and minor_digits:
+            return f"{int(major)}.{int(minor_digits)}"
+
+        git_version = str(getattr(info, "git_version", "")).strip()
+        match = re.search(r"(\d+)\.(\d+)", git_version)
+        if match:
+            return f"{int(match.group(1))}.{int(match.group(2))}"
+
+        raise ValueError("Version API returned unparseable version fields")
     except Exception as exc:
-        logger.warning("get_k8s_version failed for %s: %s", cluster_name, exc)
-        return "unknown"
+        logger.warning("Primary version lookup failed for %s: %s", cluster_name, exc)
+
+    # Fallback: infer cluster version from node kubelet versions.
+    try:
+        core = gateway.get_core_client(cluster_name)
+        node_list = core.list_node()
+        versions = []
+        for node in node_list.items:
+            kubelet_version = ""
+            if node.status and node.status.node_info and node.status.node_info.kubelet_version:
+                kubelet_version = str(node.status.node_info.kubelet_version)
+            match = re.search(r"(\d+)\.(\d+)", kubelet_version)
+            if match:
+                versions.append((int(match.group(1)), int(match.group(2))))
+
+        if versions:
+            major, minor = max(versions)
+            return f"{major}.{minor}"
+    except Exception as exc:
+        logger.warning("Fallback node-based version lookup failed for %s: %s", cluster_name, exc)
+
+    logger.warning("get_k8s_version failed for %s: returning unknown", cluster_name)
+    return "unknown"

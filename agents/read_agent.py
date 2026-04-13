@@ -54,6 +54,7 @@ MUTATION_INTENTS = {
 
 
 def _to_yaml(payload: Any) -> str:
+    """Convert a Python object into human-readable YAML text."""
     return yaml.safe_dump(payload, sort_keys=False, default_flow_style=False)
 
 
@@ -231,16 +232,18 @@ MOCK_K8S_DATA = {
 class ReadAgent:
 
     def __init__(self, gateway: ClusterGateway):
+        """Initialize the agent with cluster gateway and AI provider availability."""
         self.gateway = gateway
         self._ai_provider = self._resolve_ai_provider()
-        self._ai_available = self._ai_provider in {"anthropic", "github_models"}
+        self._ai_available = self._ai_provider in {"anthropic", "github_models", "copilot"}
 
     def _resolve_ai_provider(self) -> str:
+        """Pick the active AI backend based on settings and configured credentials."""
         provider = (settings.ai_provider or "auto").strip().lower()
         if provider == "anthropic" and settings.anthropic_api_key:
             return "anthropic"
-        if provider == "github_models" and settings.github_models_token:
-            return "github_models"
+        if provider in {"github_models", "copilot"} and settings.github_models_token:
+            return provider
         if provider == "auto":
             if settings.anthropic_api_key:
                 return "anthropic"
@@ -249,23 +252,29 @@ class ReadAgent:
         return "none"
 
     def get_llm_status(self) -> Dict[str, Any]:
+        """Return current LLM provider status and configuration visibility flags."""
+        general_chat_effective = self._resolve_general_chat_provider()
         if self._ai_provider == "anthropic":
             return {
                 "enabled": True,
                 "provider": "anthropic",
                 "model": settings.anthropic_model,
+                "general_chat_provider": settings.general_chat_provider,
+                "effective_general_chat_provider": general_chat_effective,
                 "configured": {
                     "anthropic_api_key": bool(settings.anthropic_api_key),
                     "github_models_token": bool(settings.github_models_token),
                 },
             }
 
-        if self._ai_provider == "github_models":
+        if self._ai_provider in {"github_models", "copilot"}:
             return {
                 "enabled": True,
-                "provider": "github_models",
+                "provider": self._ai_provider,
                 "model": settings.github_models_model,
                 "endpoint": settings.github_models_endpoint,
+                "general_chat_provider": settings.general_chat_provider,
+                "effective_general_chat_provider": general_chat_effective,
                 "configured": {
                     "anthropic_api_key": bool(settings.anthropic_api_key),
                     "github_models_token": bool(settings.github_models_token),
@@ -276,12 +285,23 @@ class ReadAgent:
             "enabled": False,
             "provider": "none",
             "model": None,
+            "general_chat_provider": settings.general_chat_provider,
+            "effective_general_chat_provider": general_chat_effective,
             "configured": {
                 "anthropic_api_key": bool(settings.anthropic_api_key),
                 "github_models_token": bool(settings.github_models_token),
             },
             "message": "No LLM provider configured. Set AI_PROVIDER and credentials in .env.",
         }
+
+    def _resolve_general_chat_provider(self) -> str:
+        """Resolve provider for general-chat prompts with safe fallback."""
+        pref = (settings.general_chat_provider or "default").strip().lower()
+        if pref == "anthropic" and settings.anthropic_api_key:
+            return "anthropic"
+        if pref in {"github_models", "copilot"} and settings.github_models_token:
+            return "copilot"
+        return self._ai_provider
 
     # ── Main entrypoint ───────────────────────────────────────────────────────
 
@@ -293,6 +313,7 @@ class ReadAgent:
         session_id: Optional[str] = None,
         chat_mode: str = "k8-info",
     ) -> ChatQueryResponse:
+        """Main request pipeline: parse, authorize, execute, summarize, and audit."""
 
         session_id = session_id or str(uuid.uuid4())
         chat_mode = (chat_mode or "k8-info").strip().lower()
@@ -555,6 +576,13 @@ class ReadAgent:
         # Normalize typos in app names against user's allowed apps before RBAC.
         intent.app_name = self._normalize_app_name(intent.app_name, user, db)
 
+        # Recover if parser captured a partial token (for example "eks").
+        allowed_apps = get_user_allowed_apps(user, db)
+        if intent.app_name and allowed_apps != ["*"] and intent.app_name not in allowed_apps:
+            inferred = self._infer_app(query, allowed_apps)
+            if inferred:
+                intent.app_name = inferred
+
         # Namespace-first workflow for operational reads
         namespace_required_intents = {
             "pods", "quota", "hpa", "ingress", "deployments", "deployment_manifest", "deployment_edit", "service_edit", "ingress_edit", "secret_edit", "resourcequota_edit", "services", "secrets", "deployment_update", "service_update", "ingress_update", "secret_update", "resourcequota_update", "logs", "where", "version", "describe_pod", "deployment_describe", "service_describe", "ingress_describe", "secret_describe", "pod_select", "image_pull_help", "k8s_issue_help"
@@ -813,9 +841,11 @@ class ReadAgent:
     # ── Intent parser (keyword, no AI) ────────────────────────────────────────
 
     def _parse_intent(self, query: str) -> IntentResult:
+        """Parse raw user text into a normalized intent object and extracted fields."""
         q = query.lower()
         q_stripped = q.strip()
         intent_type = "summary"
+        forced_general_chat = bool(re.match(r"^(general|llm)\s*:\s*", q_stripped))
         generic_describe_name: Optional[str] = None
         generic_describe_key: Optional[str] = None
         force_list_intent: Optional[str] = None
@@ -831,12 +861,16 @@ class ReadAgent:
                 force_list_intent = forced
                 break
 
-        if q_stripped in {"confirm", "confirm apply", "apply now", "yes apply", "confirm deployment"}:
+        if forced_general_chat:
+            intent_type = "general_chat"
+        elif q_stripped in {"confirm", "confirm apply", "apply now", "yes apply", "confirm deployment"}:
             intent_type = "mutation_confirm"
         elif q_stripped in {"cancel", "cancel apply", "discard", "abort"}:
             intent_type = "mutation_cancel"
         elif q_stripped in {"main menu", "menu", "start over", "starting point", "home"}:
             intent_type = "main_menu"
+        elif q_stripped in {"general questions", "general question", "general chat", "llm questions", "ask general"}:
+            intent_type = "general_chat"
         # Note: describe deployment/service/ingress/secret are extracted via resource_names, not here
         elif q_stripped in {"describe", "describe pod", "pod describe"}:
             intent_type = "describe_pod"
@@ -915,7 +949,15 @@ class ReadAgent:
 
         # Resource intents must take precedence over namespace keywords,
         # so queries like "show pods in namespace wildfly-test" map to pods.
-        if intent_type == "summary":
+        question_like = bool(
+            q_stripped.endswith("?") or
+            re.match(r"^(what|why|how|when|where|who|which|can|could|would|should|explain|define|compare)\b", q_stripped)
+        )
+        command_like = bool(re.search(r"\b(show|list|get|describe|logs?|tail|select|edit|update|set|scale|rollout|restart|delete|patch|apply)\b", q))
+
+        if intent_type == "summary" and question_like and not command_like:
+            intent_type = "general_chat"
+        elif intent_type == "summary":
             if any(w in q for w in ["pod", "container", "running", "crash", "restart"]):
                 intent_type = "pods"
             elif any(w in q for w in ["node", "nodes", "worker node", "cluster node"]):
@@ -955,9 +997,12 @@ class ReadAgent:
                 intent_type = "describe_pod"
 
         app_name = None
-        app_match = re.search(r"(?:for|of)\s+([a-z0-9-]+)", q)
+        app_match = re.search(
+            r"(?:for|of)\s+([a-z0-9][a-z0-9 ._-]*?)(?:\s+in\s+namespace\b|\s+namespace\b|\s+in\s+cluster\b|$)",
+            q,
+        )
         if app_match:
-            app_name = app_match.group(1)
+            app_name = app_match.group(1).strip()
 
         pod_name = self._extract_pod_name(q)
         tail_lines = self._extract_tail_lines(q)
@@ -1023,7 +1068,7 @@ class ReadAgent:
             update_data = update_data or {}
             update_data.setdefault("deployment_name", deployment_name)
 
-        if force_list_intent:
+        if force_list_intent and not forced_general_chat:
             intent_type = force_list_intent
 
         namespace = self._extract_namespace(q)
@@ -1034,12 +1079,35 @@ class ReadAgent:
                 intent_type = "namespace_select"
 
         if intent_type == "summary" and not app_name and not namespace:
-            k8s_resolution_hints = [
-                "k8s", "kubernetes", "cluster", "namespace", "pod", "service", "deployment",
-                "hpa", "quota", "ingress", "imgress", "issue", "issues", "error", "errors",
-                "failed", "not working", "resolution", "resolutions", "troubleshoot", "check",
+            general_explainer_hints = [
+                "what is",
+                "explain",
+                "in simple",
+                "difference between",
+                "how does",
+                "why does",
+                "best practice",
+                "when should",
+                "can you explain",
+                "compare",
             ]
-            if any(h in q for h in k8s_resolution_hints):
+            # Command-style operations should continue to use existing K8s intent handlers.
+            operational_hints = [
+                "show", "list", "get", "describe", "logs", "tail", "select", "edit",
+                "update", "set", "scale", "rollout", "restart", "delete", "patch",
+                "apply", "troubleshoot", "debug", "check", "status",
+            ]
+            troubleshooting_hints = [
+                "issue", "issues", "error", "errors", "failed", "not working",
+                "resolution", "resolutions", "troubleshoot", "debug", "check",
+            ]
+            has_operational_hint = any(h in q for h in operational_hints)
+
+            # Prefer general-chat for explanatory prompts even if they contain
+            # Kubernetes terms (for example "what is Kubernetes in simple terms").
+            if any(h in q for h in general_explainer_hints) or (question_like and not has_operational_hint):
+                intent_type = "general_chat"
+            elif any(h in q for h in troubleshooting_hints):
                 intent_type = "k8s_issue_help"
             elif not re.fullmatch(r"[a-z0-9-]+", q_stripped):
                 intent_type = "general_chat"
@@ -1056,6 +1124,7 @@ class ReadAgent:
                     namespace=namespace, raw_query=query, extra=update_data or {})
 
     def _extract_deployment_update(self, query_lower: str) -> Optional[Dict[str, Any]]:
+        """Extract deployment mutation details such as replicas or container image."""
         scale_patterns = [
             r"scale\s+deployment\s+([a-z0-9-]+)\s+to\s+(\d+)",
             r"set\s+replicas\s+(\d+)\s+for\s+deployment\s+([a-z0-9-]+)",
@@ -1085,6 +1154,7 @@ class ReadAgent:
         return None
 
     def _extract_service_update(self, query_lower: str) -> Optional[Dict[str, Any]]:
+        """Extract service mutation details such as service type or port mapping."""
         type_patterns = [
             r"update\s+service\s+([a-z0-9._-]+)\s+type\s+(clusterip|nodeport|loadbalancer|externalname)",
             r"set\s+service\s+([a-z0-9._-]+)\s+type\s+(clusterip|nodeport|loadbalancer|externalname)",
@@ -1114,6 +1184,7 @@ class ReadAgent:
         return None
 
     def _extract_ingress_update(self, query_lower: str) -> Optional[Dict[str, Any]]:
+        """Extract ingress host update intent from natural language command text."""
         patterns = [
             r"update\s+ingress\s+([a-z0-9._-]+)\s+host\s+([a-z0-9.-]+)",
             r"set\s+ingress\s+([a-z0-9._-]+)\s+host\s+([a-z0-9.-]+)",
@@ -1125,6 +1196,7 @@ class ReadAgent:
         return None
 
     def _extract_secret_update(self, query_raw: str) -> Optional[Dict[str, Any]]:
+        """Extract secret key/value update command while preserving quoted values."""
         pattern = r"^\s*update\s+secret\s+([a-z0-9._-]+)\s+key\s+([a-zA-Z0-9_./-]+)\s+value\s+(.+?)\s*$"
         m = re.match(pattern, query_raw, re.IGNORECASE)
         if not m:
@@ -1139,6 +1211,7 @@ class ReadAgent:
         }
 
     def _extract_resourcequota_update(self, query_lower: str) -> Optional[Dict[str, Any]]:
+        """Extract ResourceQuota hard limit updates (cpu, memory, pods)."""
         name_match = re.search(r"(?:update\s+resourcequota|set\s+resourcequota|set\s+quota)\s+([a-z0-9._-]+)", query_lower)
         if not name_match:
             return None
@@ -1164,6 +1237,7 @@ class ReadAgent:
         }
 
     def _extract_deployment_name(self, query_lower: str) -> Optional[str]:
+        """Extract a deployment name candidate from generic deployment-related queries."""
         patterns = [
             r"deployment\s+([a-z0-9][a-z0-9._-]*)",
             r"show\s+deployments?\s+([a-z0-9][a-z0-9._-]*)",
@@ -1177,6 +1251,7 @@ class ReadAgent:
         return None
 
     def _extract_resource_names(self, query_lower: str) -> Dict[str, str]:
+        """Extract explicit resource names for describe/show commands by resource type."""
         out: Dict[str, str] = {}
 
         patterns = {
@@ -1194,6 +1269,7 @@ class ReadAgent:
         return out
 
     def _extract_namespace(self, query_lower: str) -> Optional[str]:
+        """Extract namespace token from common namespace phrasing patterns."""
         patterns = [
             r"namespace\s+([a-z0-9-]+)",
             r"ns\s+([a-z0-9-]+)",
@@ -1206,6 +1282,7 @@ class ReadAgent:
         return None
 
     def _extract_pod_name(self, query_lower: str) -> Optional[str]:
+        """Extract pod name from describe/select/log style commands."""
         patterns = [
             r"describe\s+(?:pod\s+)?([a-z0-9][a-z0-9._-]*)",
             r"pod\s+([a-z0-9][a-z0-9._-]*)",
@@ -1221,6 +1298,7 @@ class ReadAgent:
         return None
 
     def _extract_tail_lines(self, query_lower: str) -> Optional[int]:
+        """Extract requested log line count from terms like tail/last/N lines."""
         patterns = [
             r"(\d+)\s*lines?",
             r"last\s+(\d+)",
@@ -1236,6 +1314,7 @@ class ReadAgent:
         return None
 
     def _infer_app(self, query: str, allowed_apps: List[str]) -> Optional[str]:
+        """Infer app name from query text using the caller's allowed applications."""
         if allowed_apps == ["*"]:
             return None
         q = query.lower()
@@ -1250,6 +1329,7 @@ class ReadAgent:
         user: User,
         db: Session,
     ) -> Optional[str]:
+        """Fix app typos using fuzzy match against apps the user is allowed to access."""
         if not app_name:
             return app_name
 
@@ -1268,10 +1348,16 @@ class ReadAgent:
         if app_name in candidates:
             return app_name
 
+        # Case-insensitive exact match.
+        lower_map = {c.lower(): c for c in candidates}
+        if app_name.lower() in lower_map:
+            return lower_map[app_name.lower()]
+
         matches = get_close_matches(app_name, candidates, n=1, cutoff=0.75)
         return matches[0] if matches else app_name
 
     def _infer_app_from_namespace(self, namespace: str, user: User, db: Session) -> Optional[str]:
+        """Infer app by namespace from active registry entries and user access scope."""
         allowed = get_user_allowed_apps(user, db)
         rows = db.query(ClusterRegistry).filter(
             ClusterRegistry.namespace == namespace,
@@ -1288,6 +1374,7 @@ class ReadAgent:
         db: Session,
         app_name: Optional[str] = None,
     ) -> List[str]:
+        """List namespaces visible to the user, optionally filtered by app."""
         allowed = get_user_allowed_apps(user, db)
         q = db.query(ClusterRegistry).filter(ClusterRegistry.is_active == True)
         if app_name:
@@ -1300,6 +1387,7 @@ class ReadAgent:
         return sorted(namespaces)
 
     def _resolve_pod_name(self, requested: str, pod_names: List[str]) -> Optional[str]:
+        """Resolve a user-provided pod token to an actual pod name using fuzzy rules."""
         if not requested or not pod_names:
             return None
 
@@ -1329,6 +1417,7 @@ class ReadAgent:
         db: Session,
         resource_kind: str,
     ) -> Optional[str]:
+        """Auto-select resource name when exactly one matching resource exists."""
         if not intent.app_name or not intent.namespace:
             return None
 
@@ -1356,6 +1445,7 @@ class ReadAgent:
     # ── Registry ─────────────────────────────────────────────────────────────
 
     def _get_registry_entries(self, intent: IntentResult, db: Session) -> List[ClusterRegistry]:
+        """Fetch active registry rows for intent app/environment targeting."""
         if not intent.app_name:
             return []
         q = db.query(ClusterRegistry).filter(
@@ -1371,6 +1461,7 @@ class ReadAgent:
     # ── Mock data ─────────────────────────────────────────────────────────────
 
     def _mock_data(self, intent: IntentResult, app_name: str) -> Dict[str, Any]:
+        """Return deterministic mock Kubernetes data for local/demo operation modes."""
         app = MOCK_K8S_DATA.get(app_name, MOCK_K8S_DATA["payments-api"])
         if intent.intent_type == "namespaces":
             return {
@@ -1626,6 +1717,7 @@ class ReadAgent:
     # ── Real K8s ──────────────────────────────────────────────────────────────
 
     def _execute_k8s_read(self, intent: IntentResult, reg: ClusterRegistry) -> Dict[str, Any]:
+        """Execute read-only Kubernetes operations against a resolved cluster context."""
         cluster = reg.cluster_name
         ns = intent.namespace or reg.namespace
         gw = self.gateway
@@ -1786,6 +1878,7 @@ class ReadAgent:
                     last_state = (c.get("last_state") or "").lower()
 
                     def add_issue(issue_type: str, detail: str):
+                        """Collect an issue signature detected while scanning pod/container status."""
                         issue_types.add(issue_type)
                         detected_issues.append({
                             "type": issue_type,
@@ -1898,6 +1991,7 @@ class ReadAgent:
                     "cluster": cluster, "namespace": ns}
 
     def _execute_k8s_mutation(self, intent: IntentResult, reg: ClusterRegistry) -> Dict[str, Any]:
+        """Execute validated Kubernetes write operations for supported mutation intents."""
         cluster = reg.cluster_name
         ns = intent.namespace or reg.namespace
         gw = self.gateway
@@ -1991,6 +2085,7 @@ class ReadAgent:
     # ── Summary ───────────────────────────────────────────────────────────────
 
     def _generate_summary(self, query, raw_data, intent, user, chat_mode: str = "k8-info") -> str:
+        """Build final answer text using AI when available, else plain-text formatter."""
         # Detailed resource views should return full output without model summarization.
         if intent.intent_type in {
             "describe_pod", "deployment_manifest", "deployment_edit", "service_edit", "ingress_edit", "secret_edit", "resourcequota_edit", "deployment_describe",
@@ -2009,11 +2104,14 @@ class ReadAgent:
         return self._plain_summary(query, raw_data, intent, user, chat_mode)
 
     def _ai_summary(self, query, raw_data, intent, user) -> str:
-        if self._ai_provider == "github_models":
+        """Dispatch summary generation to the configured AI provider implementation."""
+        if self._ai_provider in {"github_models", "copilot"}:
             return self._github_models_summary(query, raw_data, user)
         return self._anthropic_summary(query, raw_data, user)
 
     def _general_chat_response(self, query: str, user: User, context: Dict[str, Any]) -> str:
+        """Handle non-operational chat requests using AI or a lightweight fallback."""
+        query = re.sub(r"^\s*(general|llm)\s*:\s*", "", query, flags=re.IGNORECASE).strip() or query
         if self._ai_available:
             try:
                 return self._ai_general_chat(query, user, context)
@@ -2038,11 +2136,14 @@ class ReadAgent:
         )
 
     def _ai_general_chat(self, query: str, user: User, context: Dict[str, Any]) -> str:
-        if self._ai_provider == "github_models":
+        """Route general chat to the selected AI backend."""
+        provider = self._resolve_general_chat_provider()
+        if provider in {"github_models", "copilot"}:
             return self._github_models_general_chat(query, user, context)
         return self._anthropic_general_chat(query, user, context)
 
     def _anthropic_summary(self, query, raw_data, user) -> str:
+        """Generate operational summary text through Anthropic Messages API."""
         import anthropic
 
         client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
@@ -2065,6 +2166,7 @@ class ReadAgent:
         return response.content[0].text.strip()
 
     def _github_models_summary(self, query, raw_data, user) -> str:
+        """Generate operational summary text through GitHub Models chat endpoint."""
         system_prompt = (
             "You are K8S-AI, a Kubernetes operations assistant. "
             f"User: {user.username} ({user.role}). "
@@ -2105,6 +2207,7 @@ class ReadAgent:
         return "No response"
 
     def _anthropic_general_chat(self, query: str, user: User, context: Dict[str, Any]) -> str:
+        """Generate general conversational response via Anthropic API."""
         import anthropic
 
         client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
@@ -2131,6 +2234,7 @@ class ReadAgent:
         return response.content[0].text.strip()
 
     def _github_models_general_chat(self, query: str, user: User, context: Dict[str, Any]) -> str:
+        """Generate general conversational response via GitHub Models endpoint."""
         system_prompt = (
             "You are K8S-AI assistant in a Kubernetes platform chat. "
             "Answer user questions clearly and concisely. "
@@ -2174,6 +2278,7 @@ class ReadAgent:
         return "No response"
 
     def _plain_summary(self, query, raw_data, intent, user, chat_mode: str = "k8-info") -> str:
+        """Render readable plain-text summaries for all supported intents and data shapes."""
         lines = []
         can_edit = chat_mode in {"k8-agent", "k8-autofix"}
         is_demo = any("demo" in c or "mock" in c for c in raw_data.keys())
@@ -2630,7 +2735,7 @@ class ReadAgent:
         namespace: str = "",
         success: bool = True,
     ) -> None:
-        """Append an immutable audit record to the database."""
+        """Persist immutable audit metadata for each read or mutation request."""
         try:
             log = AuditLog(
                 user_id=user.id,

@@ -305,6 +305,7 @@ def get_suggestions(
 @router.get("/namespaces")
 def get_namespaces(
     session_id: Optional[str] = None,
+    cluster_name: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
     gateway: ClusterGateway = Depends(get_gateway),
@@ -318,29 +319,35 @@ def get_namespaces(
     q = db.query(ClusterRegistry.app_name, ClusterRegistry.namespace, ClusterRegistry.cluster_name).filter(
         ClusterRegistry.is_active == True,
     )
+    if cluster_name:
+        q = q.filter(ClusterRegistry.cluster_name == cluster_name)
     if allowed_apps != ["*"]:
         if not allowed_apps:
             return {
                 "namespaces": [],
                 "selected_namespace": selected_namespace,
                 "selected_app": selected_app,
+                "selected_cluster": cluster_name,
             }
         q = q.filter(ClusterRegistry.app_name.in_(allowed_apps))
 
     rows = q.distinct().all()
-    if selected_app:
+    # If a specific cluster is requested from UI selection, do not constrain by
+    # previously selected app in session context (it may belong to another cluster).
+    if selected_app and not cluster_name:
         rows = [r for r in rows if r[0] == selected_app]
 
     # Start with DB namespaces as fallback.
     namespaces = {ns for _, ns, _ in rows}
 
     # Enrich with live namespaces from connected clusters.
+    # Important: query each cluster only once to avoid repeated K8s API calls
+    # when many app/namespace rows point to the same cluster.
     connected_clusters = set(gateway.list_clusters())
-    for app_name, _, cluster_name in rows:
-        if cluster_name not in connected_clusters:
-            continue
+    clusters_to_query = {reg_cluster for _, _, reg_cluster in rows if reg_cluster in connected_clusters}
+    for reg_cluster in clusters_to_query:
         try:
-            live_namespaces = list_namespaces(cluster_name, gateway)
+            live_namespaces = list_namespaces(reg_cluster, gateway)
             namespaces.update(ns.name for ns in live_namespaces)
         except Exception:
             # Keep fallback namespaces from registry if live read fails.
@@ -352,6 +359,7 @@ def get_namespaces(
         "namespaces": namespaces,
         "selected_namespace": selected_namespace,
         "selected_app": selected_app,
+        "selected_cluster": cluster_name,
     }
 
 

@@ -35,7 +35,10 @@ class Settings(BaseSettings):
     anthropic_model: str = Field(
         "claude-sonnet-4-20250514", alias="ANTHROPIC_MODEL"
     )
+    # Supported values: auto | anthropic | github_models | copilot
     ai_provider: str = Field("auto", alias="AI_PROVIDER")
+    # Supported values: default | anthropic | github_models | copilot
+    general_chat_provider: str = Field("default", alias="GENERAL_CHAT_PROVIDER")
     github_models_token: str = Field("", alias="GITHUB_MODELS_TOKEN")
     github_models_endpoint: str = Field(
         "https://models.inference.ai.azure.com/chat/completions",

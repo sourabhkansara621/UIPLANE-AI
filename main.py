@@ -126,7 +126,7 @@ def serve_ui():
     """Serve the chat UI."""
     template_path = Path(__file__).parent / "ui" / "templates" / "index.html"
     if template_path.exists():
-        return HTMLResponse(content=template_path.read_text())
+        return HTMLResponse(content=template_path.read_text(encoding='utf-8'))
     return HTMLResponse("<h1>K8S-AI Platform</h1><p>UI not found. See /docs</p>")
 
 

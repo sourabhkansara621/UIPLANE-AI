@@ -111,6 +111,43 @@
       color: var(--muted)
     }
 
+    .general-btn {
+      background: color-mix(in srgb, var(--accent) 14%, transparent);
+      border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+      color: var(--accent);
+      cursor: pointer;
+      font-size: 12px;
+      font-family: var(--mono);
+      padding: 3px 8px;
+      border-radius: 10px;
+    }
+
+    .general-btn:hover {
+      background: color-mix(in srgb, var(--accent) 22%, transparent);
+      border-color: var(--accent);
+    }
+
+    .upgrade-btn {
+      background: color-mix(in srgb, var(--warn) 14%, transparent);
+      border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--border));
+      color: var(--warn);
+      cursor: pointer;
+      font-size: 12px;
+      font-family: var(--mono);
+      padding: 3px 8px;
+      border-radius: 10px;
+    }
+
+    .upgrade-btn:hover {
+      background: color-mix(in srgb, var(--warn) 22%, transparent);
+      border-color: var(--warn);
+    }
+
+    .upgrade-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
     .logout-btn {
       background: none;
       border: none;
@@ -361,11 +398,55 @@
       padding: .4rem .5rem;
       font-size: 12px;
       font-family: var(--mono);
-      border-bottom: 1px solid var(--border)
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      transition: background .15s ease
+    }
+
+    .cluster-entry:hover {
+      background: rgba(255, 255, 255, 0.03)
+    }
+
+    .cluster-entry.active {
+      background: rgba(17, 118, 252, 0.14);
+      border-left: 2px solid var(--accent);
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent)
+    }
+
+    .cluster-entry.active .cluster-name {
+      color: var(--success)
     }
 
     .cluster-entry:last-child {
       border-bottom: none
+    }
+
+    .cluster-top-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .cluster-check {
+      margin-left: auto;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: color-mix(in srgb, var(--success) 18%, transparent);
+      border: 1px solid color-mix(in srgb, var(--success) 70%, transparent);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .cluster-check::before {
+      content: '';
+      width: 6px;
+      height: 3px;
+      border-left: 2px solid var(--success);
+      border-bottom: 2px solid var(--success);
+      transform: rotate(-45deg) translate(0, -1px);
     }
 
     .cluster-name {
@@ -627,5 +708,35 @@
 
     .hidden {
       display: none !important
+    }
+
+    /* Version selection buttons */
+    .version-btn {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 10px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: var(--mono);
+      font-size: 13px;
+      transition: all 0.2s ease;
+    }
+
+    .version-btn:hover {
+      border-color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 8%, var(--surface2));
+    }
+
+    .version-btn.selected {
+      background: color-mix(in srgb, var(--accent) 22%, transparent);
+      border-color: var(--accent);
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    .version-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
     }
   
