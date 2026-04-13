@@ -18,7 +18,7 @@
       <span id="chip-name">-</span>
       <span class="role" id="chip-role">-</span>
       <button class="general-btn" onclick="openGeneralQuestion()">General Questions</button>
-      <button class="upgrade-btn" id="upgrade-btn" onclick="openUpgradeModal()" title="Upgrade K8s version for selected cluster">Upgrade K8s</button>
+      <button class="upgrade-btn" id="upgrade-btn" title="Upgrade K8s version for selected cluster">Upgrade K8s</button>
       <button class="logout-btn" onclick="logout()">logout</button>
     </div>
   </div>
@@ -155,7 +155,7 @@
       <!-- Header -->
       <div style="padding:16px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
         <h2 style="color:var(--accent); font-size:1.2rem; margin:0;">Upgrade Kubernetes Version</h2>
-        <button onclick="closeUpgradeModal()" style="background:transparent; border:1px solid var(--muted); color:var(--text); padding:4px 8px; border-radius:4px; cursor:pointer;">[X]</button>
+        <button id="upgrade-close-btn" style="background:transparent; border:1px solid var(--muted); color:var(--text); padding:4px 8px; border-radius:4px; cursor:pointer;">[X]</button>
       </div>
 
       <!-- Body -->
@@ -198,13 +198,13 @@
 
       <!-- Footer Buttons -->
       <div style="padding:16px 20px; border-top:1px solid var(--border); display:flex; gap:8px; justify-content:flex-end;">
-        <button onclick="closeUpgradeModal()" style="background:transparent; border:1px solid var(--muted); color:var(--text); padding:8px 16px; border-radius:4px; cursor:pointer; font-size:0.9rem;">Cancel</button>
-        <button id="upgrade-action-btn" onclick="confirmUpgrade()" style="background:linear-gradient(135deg, var(--accent), var(--accent2)); border:none; color:var(--bg); padding:8px 20px; border-radius:4px; cursor:pointer; font-weight:500; font-size:0.9rem; opacity:0.5;" disabled>Select Version</button>
+        <button id="upgrade-cancel-btn" style="background:transparent; border:1px solid var(--muted); color:var(--text); padding:8px 16px; border-radius:4px; cursor:pointer; font-size:0.9rem;">Cancel</button>
+        <button id="upgrade-action-btn" style="background:linear-gradient(135deg, var(--accent), var(--accent2)); border:none; color:var(--bg); padding:8px 20px; border-radius:4px; cursor:pointer; font-weight:500; font-size:0.9rem; opacity:0.5;" disabled>Select Version</button>
       </div>
     </div>
   </div>
 
-    <script src="/static/js/index.js"></script>
+    <script src="/static/js/index.js?v=20260413b"></script>
 </body>
 
 </html>

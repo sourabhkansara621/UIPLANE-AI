@@ -357,8 +357,21 @@
 
     async function openUpgradeModal() {
       if (!selectedCluster) {
-        alert('Please select a cluster first');
-        return;
+        // Recover from stale UI state by auto-selecting first available cluster.
+        if (!cachedClusterEntries.length) {
+          await loadClusters();
+        }
+        const fallbackCluster = cachedClusterEntries[0]?.cluster_name || null;
+        if (fallbackCluster) {
+          selectedCluster = fallbackCluster;
+          localStorage.setItem('k8sai_selected_cluster', selectedCluster);
+          await loadClusters();
+          await loadNamespaces();
+          await loadSuggestions();
+        } else {
+          alert('Please select a cluster first');
+          return;
+        }
       }
       
       selectedUpgradeVersion = null;
@@ -1111,6 +1124,16 @@
     document.addEventListener('DOMContentLoaded', () => {
       logout();
       renderChatMode();
+
+      const upgradeBtn = document.getElementById('upgrade-btn');
+      const upgradeCloseBtn = document.getElementById('upgrade-close-btn');
+      const upgradeCancelBtn = document.getElementById('upgrade-cancel-btn');
+      const upgradeActionBtn = document.getElementById('upgrade-action-btn');
+      if (upgradeBtn) upgradeBtn.addEventListener('click', openUpgradeModal);
+      if (upgradeCloseBtn) upgradeCloseBtn.addEventListener('click', closeUpgradeModal);
+      if (upgradeCancelBtn) upgradeCancelBtn.addEventListener('click', closeUpgradeModal);
+      if (upgradeActionBtn) upgradeActionBtn.addEventListener('click', confirmUpgrade);
+
       document.getElementById('chat-input').addEventListener('keydown', e => {
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendQuery(); }
       });
@@ -1118,4 +1141,10 @@
         if (e.key === 'Enter') doLogin();
       });
     });
+
+    // Ensure inline onclick handlers always resolve these actions.
+    window.openUpgradeModal = openUpgradeModal;
+    window.closeUpgradeModal = closeUpgradeModal;
+    window.confirmUpgrade = confirmUpgrade;
+    window.selectUpgradeVersion = selectUpgradeVersion;
   
