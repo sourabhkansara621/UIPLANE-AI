@@ -14,6 +14,14 @@ sys.path.insert(0, str(Path(__file__).parent))
 from models.database import SessionLocal, create_tables, User, AppOwnership
 from auth.jwt_handler import hash_password
 
+PRIYA_APPS = [
+    "sandbox",
+    "EKS",
+    "GKE",
+    "AKS",
+    "on-prem Rancher",
+]
+
 def create_tables_if_needed():
     """Create tables if they don't exist."""
     try:
@@ -37,6 +45,26 @@ def add_priya():
                 existing.is_active = True
                 db.commit()
                 print("  ✓ Activated user 'priya'")
+
+            # Ensure required app access exists.
+            for app_name in PRIYA_APPS:
+                existing_ownership = db.query(AppOwnership).filter(
+                    AppOwnership.user_id == existing.id,
+                    AppOwnership.app_name == app_name,
+                ).first()
+                if existing_ownership:
+                    continue
+                ownership = AppOwnership(
+                    user_id=existing.id,
+                    app_name=app_name,
+                    can_read=True,
+                    can_mutate=False,
+                    granted_by="script",
+                )
+                db.add(ownership)
+                print(f"  ✓ Granted app access: {app_name} (read-only)")
+
+            db.commit()
             return existing.id
         
         # Create new user
@@ -54,21 +82,24 @@ def add_priya():
         db.flush()
         print(f"✓ Created user 'priya' (ID: {user_id})")
         
-        # Grant access to 'sandbox' app
-        ownership = AppOwnership(
-            user_id=user_id,
-            app_name="sandbox",
-            can_read=True,
-            can_mutate=False,  # Set to False initially
-            granted_by="script",
-        )
-        db.add(ownership)
+        # Grant default app access list.
+        for app_name in PRIYA_APPS:
+            ownership = AppOwnership(
+                user_id=user_id,
+                app_name=app_name,
+                can_read=True,
+                can_mutate=False,
+                granted_by="script",
+            )
+            db.add(ownership)
         db.commit()
-        print(f"✓ Granted app access: sandbox (read-only)")
+        print("✓ Granted app access (read-only):")
+        for app_name in PRIYA_APPS:
+            print(f"  - {app_name}")
         print("\n--- LOGIN INFO ---")
         print("Username: priya")
         print("Password: demo1234")
-        print("App: sandbox")
+        print(f"Apps: {', '.join(PRIYA_APPS)}")
         
         return user_id
         

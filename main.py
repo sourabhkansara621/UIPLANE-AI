@@ -36,6 +36,7 @@ from api import (
     k8s_router,
     audit_router,
     mcp_router,
+    admin_db_router,
 )
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -117,6 +118,7 @@ app.include_router(chat_router)
 app.include_router(k8s_router)
 app.include_router(audit_router)
 app.include_router(mcp_router)
+app.include_router(admin_db_router)
 
 
 # ── UI route ──────────────────────────────────────────────────────────────────
@@ -128,6 +130,15 @@ def serve_ui():
     if template_path.exists():
         return HTMLResponse(content=template_path.read_text(encoding='utf-8'))
     return HTMLResponse("<h1>K8S-AI Platform</h1><p>UI not found. See /docs</p>")
+
+
+@app.get("/admin/db", response_class=HTMLResponse, include_in_schema=False)
+def serve_admin_db_ui():
+    """Serve the admin DB browser UI shell."""
+    template_path = Path(__file__).parent / "ui" / "templates" / "admin_db.html"
+    if template_path.exists():
+        return HTMLResponse(content=template_path.read_text(encoding="utf-8"))
+    return HTMLResponse("<h1>Admin DB UI not found</h1>", status_code=404)
 
 
 # ── Health check ──────────────────────────────────────────────────────────────

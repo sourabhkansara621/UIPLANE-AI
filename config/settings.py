@@ -11,7 +11,7 @@ from functools import lru_cache
 
 
 class Settings(BaseSettings):
-    # ── Application ────────────────────────────────────────────
+    # ── Application ────────────────────────────────────────────HTML 
     app_name: str = Field("K8S-AI Platform", alias="APP_NAME")
     app_env: str = Field("development", alias="APP_ENV")
     debug: bool = Field(True, alias="DEBUG")

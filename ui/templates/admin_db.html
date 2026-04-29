@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>K8S-AI Admin DB</title>
+  <style>
+    :root {
+      --bg: #0b0f14;
+      --surface: #121922;
+      --surface2: #1a2431;
+      --text: #dbe8f5;
+      --muted: #8ba2bc;
+      --accent: #34d399;
+      --warn: #f59e0b;
+      --danger: #ef4444;
+      --line: #233144;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      background: radial-gradient(circle at 20% 10%, #182638, var(--bg) 55%);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    .wrap {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    .head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .title { font-size: 1.3rem; font-weight: 700; }
+    .sub { color: var(--muted); font-size: 0.9rem; }
+
+    .card {
+      background: linear-gradient(180deg, var(--surface), var(--surface2));
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+
+    .row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    button {
+      border: 1px solid var(--line);
+      background: #13202f;
+      color: var(--text);
+      border-radius: 8px;
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+
+    button.primary {
+      background: linear-gradient(135deg, var(--accent), #22c55e);
+      color: #07120f;
+      border: 0;
+      font-weight: 700;
+    }
+
+    button.warn {
+      background: #2b1f07;
+      border-color: #6f4f13;
+      color: #ffd795;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 120px;
+      resize: vertical;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: #0a131e;
+      color: var(--text);
+      padding: 10px;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.92rem;
+    }
+
+    input[type="number"] {
+      width: 100px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: #0a131e;
+      color: var(--text);
+      padding: 8px;
+    }
+
+    input[type="text"], input[type="password"] {
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: #0a131e;
+      color: var(--text);
+      padding: 8px;
+      min-width: 180px;
+    }
+
+    .status {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .status.error { color: var(--danger); }
+    .status.ok { color: var(--accent); }
+
+    .tables {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .tbl-chip {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 7px 9px;
+      background: #0f1722;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.85rem;
+      color: #b9cce3;
+    }
+
+    .table-wrap {
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #0a121d;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 700px;
+      font-size: 0.9rem;
+    }
+
+    th, td {
+      border-bottom: 1px solid #1c2a3b;
+      padding: 8px;
+      text-align: left;
+      vertical-align: top;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      background: #0f1a28;
+      color: #8ad9ff;
+      font-weight: 600;
+      z-index: 1;
+    }
+
+    @media (max-width: 700px) {
+      .title { font-size: 1.1rem; }
+      table { min-width: 560px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="head">
+      <div>
+        <div class="title">Admin DB Browser</div>
+        <div class="sub">Infra-admin only. Read-only SQL is enforced by server.</div>
+      </div>
+      <div class="row">
+        <button class="warn" onclick="location.href='/'">Back to App</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row" style="justify-content: space-between;">
+        <div class="sub" id="auth-state">Not authenticated on this port.</div>
+        <div class="row">
+          <input id="admin-username" type="text" placeholder="username (ex: james)" />
+          <input id="admin-password" type="password" placeholder="password" />
+          <button onclick="loginHere()">Login Here</button>
+          <button class="warn" onclick="logoutHere()">Logout</button>
+        </div>
+      </div>
+      <div id="auth-status" class="status"></div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <button onclick="loadTables()">Load Tables</button>
+      </div>
+      <div id="tables" class="tables"></div>
+      <div id="tables-status" class="status"></div>
+    </div>
+
+    <div class="card">
+      <div class="row" style="justify-content: space-between; margin-bottom: 8px;">
+        <div class="sub">Allowed: SELECT, WITH, PRAGMA, EXPLAIN</div>
+        <div class="row">
+          <label for="limit" class="sub">Limit</label>
+          <input id="limit" type="number" min="1" max="1000" value="200" />
+          <button class="primary" onclick="runQuery()">Run Query</button>
+        </div>
+      </div>
+      <textarea id="sql">SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;</textarea>
+      <div id="query-status" class="status"></div>
+    </div>
+
+    <div class="card">
+      <div class="sub" style="margin-bottom: 8px;">Results</div>
+      <div class="table-wrap">
+        <table id="result-table">
+          <thead id="result-head"></thead>
+          <tbody id="result-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function getToken() {
+      return localStorage.getItem('k8sai_token') || '';
+    }
+
+    function authHeaders() {
+      const token = getToken();
+      return {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      };
+    }
+
+    function setStatus(id, text, cls) {
+      const el = document.getElementById(id);
+      el.textContent = text || '';
+      el.className = cls ? `status ${cls}` : 'status';
+    }
+
+    function renderTable(columns, rows) {
+      const head = document.getElementById('result-head');
+      const body = document.getElementById('result-body');
+      head.innerHTML = '';
+      body.innerHTML = '';
+
+      if (!columns || !columns.length) {
+        head.innerHTML = '<tr><th>No columns</th></tr>';
+        return;
+      }
+
+      head.innerHTML = `<tr>${columns.map(c => `<th>${escapeHtml(String(c))}</th>`).join('')}</tr>`;
+      body.innerHTML = rows.map(r => {
+        return `<tr>${r.map(v => `<td>${escapeHtml(formatCell(v))}</td>`).join('')}</tr>`;
+      }).join('');
+    }
+
+    function formatCell(value) {
+      if (value === null || value === undefined) return 'NULL';
+      if (typeof value === 'object') return JSON.stringify(value);
+      return String(value);
+    }
+
+    function escapeHtml(str) {
+      return str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    async function loadTables() {
+      setStatus('tables-status', 'Loading tables...', '');
+      try {
+        const res = await fetch('/api/admin/db/tables', { headers: authHeaders() });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to load tables');
+
+        const holder = document.getElementById('tables');
+        holder.innerHTML = (data.tables || []).map(t => `<div class="tbl-chip">${escapeHtml(t)}</div>`).join('');
+        setStatus('tables-status', `Loaded ${(data.tables || []).length} table(s).`, 'ok');
+      } catch (err) {
+        const msg = err.message || 'Failed to load tables';
+        if (msg.toLowerCase().includes('could not validate credentials')) {
+          setStatus('tables-status', 'Could not validate credentials. Use Login Here with an infra-admin account on this same port.', 'error');
+        } else {
+          setStatus('tables-status', msg, 'error');
+        }
+      }
+    }
+
+    async function runQuery() {
+      const sql = (document.getElementById('sql').value || '').trim();
+      const limitRaw = Number(document.getElementById('limit').value || 200);
+      const limit = Number.isFinite(limitRaw) ? Math.min(1000, Math.max(1, limitRaw)) : 200;
+      if (!sql) {
+        setStatus('query-status', 'Enter a SQL query.', 'error');
+        return;
+      }
+
+      setStatus('query-status', 'Running query...', '');
+      try {
+        const res = await fetch('/api/admin/db/query', {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({ query: sql, limit: limit }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Query failed');
+
+        renderTable(data.columns || [], data.rows || []);
+        setStatus('query-status', `Returned ${data.row_count} row(s).`, 'ok');
+      } catch (err) {
+        const msg = err.message || 'Query failed';
+        if (msg.toLowerCase().includes('could not validate credentials')) {
+          setStatus('query-status', 'Could not validate credentials. Login on this page first.', 'error');
+        } else {
+          setStatus('query-status', msg, 'error');
+        }
+      }
+    }
+
+    async function refreshAuthState() {
+      const token = getToken();
+      if (!token) {
+        document.getElementById('auth-state').textContent = 'Not authenticated on this port.';
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/auth/me', { headers: authHeaders() });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Token is not valid for this port/session.');
+        document.getElementById('auth-state').textContent = `Authenticated as ${data.username} (${data.role})`;
+      } catch (err) {
+        document.getElementById('auth-state').textContent = 'Stored token is invalid for this session.';
+      }
+    }
+
+    async function loginHere() {
+      const username = (document.getElementById('admin-username').value || '').trim();
+      const password = document.getElementById('admin-password').value || '';
+      if (!username || !password) {
+        setStatus('auth-status', 'Enter username and password.', 'error');
+        return;
+      }
+
+      setStatus('auth-status', 'Authenticating...', '');
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Login failed');
+
+        localStorage.setItem('k8sai_token', data.access_token);
+        setStatus('auth-status', 'Login successful.', 'ok');
+        await refreshAuthState();
+        await loadTables();
+      } catch (err) {
+        setStatus('auth-status', err.message || 'Login failed', 'error');
+      }
+    }
+
+    async function logoutHere() {
+      localStorage.removeItem('k8sai_token');
+      setStatus('auth-status', 'Logged out from local token storage.', 'ok');
+      await refreshAuthState();
+    }
+
+    // Initial table load for convenience.
+    refreshAuthState();
+    loadTables();
+  </script>
+</body>
+</html>

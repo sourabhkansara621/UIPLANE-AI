@@ -29,7 +29,13 @@ DEMO_USERS = [
         "password": "demo1234",
         "full_name": "Priya S.",
         "role": "developer",
-        "apps": [("sandbox", True, False)],
+        "apps": [
+            ("sandbox", True, False),
+            ("EKS", True, False),
+            ("GKE", True, False),
+            ("AKS", True, False),
+            ("on-prem Rancher", True, False),
+        ],
     },
     {
         "id": str(uuid.uuid4()),
