@@ -5,7 +5,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>UNIPLANE-AI Platform - Phase 1</title>
-  <link rel="stylesheet" href="/static/css/index.css" />
+  <link rel="stylesheet" href="/static/css/index.css?v=20260501a" />
 </head>
 
 <body>
@@ -14,6 +14,13 @@
   <div class="header">
     <div class="dot" id="status-dot" style="background:var(--muted);box-shadow:none"></div>
     <div class="logo">UNIPLANE AI phase-1</div>
+    <div class="theme-toggle-wrap" id="theme-toggle-wrap" title="Theme: Dark View (Night)">
+      <span class="theme-toggle-text" id="theme-toggle-text">Dark View</span>
+      <label class="theme-switch">
+        <input id="theme-toggle" type="checkbox" onchange="toggleTheme(this.checked)" />
+        <span class="theme-slider"></span>
+      </label>
+    </div>
     <div class="user-chip hidden" id="user-chip">
       <span id="chip-name">-</span>
       <span class="role" id="chip-role">-</span>
@@ -72,6 +79,61 @@
       <div id="namespace-badge"
         style="padding:8px 14px; border-bottom:1px solid var(--line); color:var(--txt-dim); font-size:.82rem; letter-spacing:.04em; text-transform:uppercase;">
         Active Namespace: not selected</div>
+      <div id="autofix-datadog-panel" class="autofix-datadog-panel hidden" aria-live="polite">
+        <div class="autofix-dd-head">
+          <div class="autofix-dd-title">Datadog Issues</div>
+          <div class="autofix-dd-controls">
+            <label for="autofix-dd-source">Source</label>
+            <select id="autofix-dd-source">
+              <option value="live" selected>Live</option>
+              <option value="sample">Sample</option>
+            </select>
+            <label for="autofix-dd-range">Range</label>
+            <select id="autofix-dd-range">
+              <option value="1">Last 1h</option>
+              <option value="6" selected>Last 6h</option>
+              <option value="24">Last 24h</option>
+              <option value="72">Last 72h</option>
+            </select>
+            <label for="autofix-dd-auto">Auto</label>
+            <select id="autofix-dd-auto">
+              <option value="0" selected>Off</option>
+              <option value="30">30s</option>
+              <option value="60">60s</option>
+              <option value="300">5m</option>
+            </select>
+            <label for="autofix-dd-pod-search">Pod</label>
+            <input id="autofix-dd-pod-search" type="text" placeholder="pod name" autocomplete="off" />
+            <button id="autofix-dd-pod-find" class="sug-btn" type="button">Find</button>
+            <button id="autofix-dd-pod-clear" class="sug-btn" type="button">Clear</button>
+            <button id="autofix-dd-refresh" class="sug-btn" type="button">Refresh</button>
+          </div>
+        </div>
+        <div id="autofix-dd-severity" class="autofix-dd-severity-row">
+          <button type="button" class="autofix-dd-sev-btn active" data-severity="all" data-label="All" onclick="setAutofixSeverityFilter('all')">All</button>
+          <button type="button" class="autofix-dd-sev-btn" data-severity="critical" data-label="Critical" onclick="setAutofixSeverityFilter('critical')">Critical</button>
+          <button type="button" class="autofix-dd-sev-btn" data-severity="error" data-label="Error" onclick="setAutofixSeverityFilter('error')">Error</button>
+          <button type="button" class="autofix-dd-sev-btn" data-severity="warning" data-label="Warning" onclick="setAutofixSeverityFilter('warning')">Warning</button>
+          <button type="button" id="autofix-history-toggle" class="autofix-dd-sev-btn" onclick="toggleAutofixHistory()">Autofix History (0)</button>
+          <button type="button" id="autofix-example-toggle" class="autofix-dd-sev-btn" onclick="toggleAutofixExamples()">Autofix Examples</button>
+        </div>
+        <div id="autofix-history-panel" class="afx-history-panel hidden">
+          <div class="afx-history-actions-top">
+            <button class="afx-history-clear-btn" type="button" onclick="clearAllAutofixHistory()">Clear All</button>
+          </div>
+          <div id="afx-history-body" class="afx-history-body"></div>
+        </div>
+        <div id="autofix-example-panel" class="afx-example-panel hidden">
+          <div class="afx-example-item"><span class="afx-example-tag">OOMKilled</span><span class="afx-example-text">Increase memory limit to 512Mi and rollout restart.</span></div>
+          <div class="afx-example-item"><span class="afx-example-tag">CrashLoopBackOff</span><span class="afx-example-text">Restart deployment, then patch startup config if needed.</span></div>
+          <div class="afx-example-item"><span class="afx-example-tag">5xx Spike</span><span class="afx-example-text">Scale replicas from 2 to 4 and increase CPU limit to 500m.</span></div>
+          <div class="afx-example-item"><span class="afx-example-tag">DB Resets</span><span class="afx-example-text">Patch ConfigMap connection values and restart.</span></div>
+        </div>
+        <div id="autofix-dd-meta" class="autofix-dd-meta"></div>
+        <div id="autofix-dd-updated" class="autofix-dd-updated"></div>
+        <div id="autofix-dd-pod-details" class="autofix-dd-pod-details hidden"></div>
+        <div id="autofix-dd-list" class="autofix-dd-list"></div>
+      </div>
       <div class="messages" id="messages"></div>
       <div class="input-area">
         <div class="suggestions" id="suggestions"></div>
@@ -86,6 +148,24 @@
         </div>
         <div class="mode-note" id="chat-mode-note"></div>
       </div>
+    </div>
+  </div>
+
+  <!-- AUTOFIX ACTION MODAL -->
+  <div id="autofix-action-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.72); z-index:10000; justify-content:center; align-items:center; padding:1.5rem;" onclick="if(event.target===this)closeAutofixModal()">
+    <div class="afx-modal-inner">
+      <div class="afx-modal-header">
+        <div class="afx-modal-title">
+          <span class="afx-modal-icon">⚡</span>
+          Autofix &mdash; <span id="afx-pod-name" class="afx-pod-label"></span>
+        </div>
+        <button class="afx-modal-close" onclick="closeAutofixModal()" title="Close">✕</button>
+      </div>
+      <div class="afx-issue-banner" id="afx-issue-banner"></div>
+      <div class="afx-severity-row" id="afx-severity-row"></div>
+      <div class="afx-steps-label">Recommended Fix Actions</div>
+      <div class="afx-actions-list" id="afx-actions-list"></div>
+      <div class="afx-result" id="afx-result" style="display:none;"></div>
     </div>
   </div>
 
@@ -229,7 +309,8 @@
     </div>
   </div>
 
-  <script src="/static/js/index.js?v=20260413b"></script>
+  <script src="/static/js/mode_handlers.js?v=20260430c"></script>
+  <script src="/static/js/index.js?v=20260501g"></script>
 </body>
 
 </html>

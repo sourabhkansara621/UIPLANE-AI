@@ -1,9 +1,9 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>K8S-AI Admin DB</title>
+  <title>UNIPLANE AI Admin DB</title>
   <style>
     :root {
       --bg: #0b0f14;
@@ -15,6 +15,18 @@
       --warn: #f59e0b;
       --danger: #ef4444;
       --line: #233144;
+    }
+
+    body.light-theme {
+      --bg: #f5f7fb;
+      --surface: #ffffff;
+      --surface2: #eef2f7;
+      --text: #0f172a;
+      --muted: #64748b;
+      --accent: #0b5fd7;
+      --warn: #b45309;
+      --danger: #b91c1c;
+      --line: #cfd8e3;
     }
 
     * { box-sizing: border-box; }
@@ -39,6 +51,68 @@
       align-items: center;
       gap: 12px;
       margin-bottom: 14px;
+    }
+
+    .theme-toggle-wrap {
+      display: inline-flex;
+      align-items: center;
+      gap: .45rem;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--surface2);
+    }
+
+    .theme-toggle-text {
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: .03em;
+      text-transform: uppercase;
+      font-family: Consolas, "Courier New", monospace;
+    }
+
+    .theme-switch {
+      position: relative;
+      display: inline-block;
+      width: 38px;
+      height: 20px;
+    }
+
+    .theme-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .theme-slider {
+      position: absolute;
+      inset: 0;
+      cursor: pointer;
+      background: #31465d;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      transition: all .2s ease;
+    }
+
+    .theme-slider:before {
+      content: "";
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      left: 2px;
+      top: 2px;
+      background: var(--text);
+      border-radius: 50%;
+      transition: transform .2s ease;
+    }
+
+    .theme-switch input:checked + .theme-slider {
+      background: #1f56a7;
+      border-color: var(--accent);
+    }
+
+    .theme-switch input:checked + .theme-slider:before {
+      transform: translateX(18px);
     }
 
     .title { font-size: 1.3rem; font-weight: 700; }
@@ -184,6 +258,13 @@
         <div class="sub">Infra-admin only. Read-only SQL is enforced by server.</div>
       </div>
       <div class="row">
+        <div class="theme-toggle-wrap" id="theme-toggle-wrap" title="Theme: Dark View (Night)">
+          <span class="theme-toggle-text" id="theme-toggle-text">Dark View</span>
+          <label class="theme-switch">
+            <input id="theme-toggle" type="checkbox" onchange="toggleTheme(this.checked)" />
+            <span class="theme-slider"></span>
+          </label>
+        </div>
         <button class="warn" onclick="location.href='/'">Back to App</button>
       </div>
     </div>
@@ -234,6 +315,25 @@
   </div>
 
   <script>
+    let themeMode = localStorage.getItem('k8sai_theme') || 'dark';
+
+    function applyTheme(theme) {
+      themeMode = theme === 'light' ? 'light' : 'dark';
+      document.body.classList.toggle('light-theme', themeMode === 'light');
+      const toggle = document.getElementById('theme-toggle');
+      if (toggle) toggle.checked = themeMode === 'light';
+      const toggleText = document.getElementById('theme-toggle-text');
+      const toggleWrap = document.getElementById('theme-toggle-wrap');
+      if (toggleText) toggleText.textContent = themeMode === 'light' ? 'Day View' : 'Dark View';
+      if (toggleWrap) toggleWrap.title = themeMode === 'light' ? 'Theme: Day View (Light)' : 'Theme: Dark View (Night)';
+    }
+
+    function toggleTheme(isOn) {
+      const nextTheme = isOn ? 'light' : 'dark';
+      applyTheme(nextTheme);
+      localStorage.setItem('k8sai_theme', nextTheme);
+    }
+
     function getToken() {
       return localStorage.getItem('k8sai_token') || '';
     }
@@ -384,6 +484,9 @@
       setStatus('auth-status', 'Logged out from local token storage.', 'ok');
       await refreshAuthState();
     }
+
+    // Initial page state
+    applyTheme(themeMode);
 
     // Initial table load for convenience.
     refreshAuthState();

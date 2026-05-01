@@ -1,4 +1,4 @@
-"""
+﻿"""
 agents/read_agent.py
 --------------------
 Phase 1 Read Agent.
@@ -58,7 +58,7 @@ def _to_yaml(payload: Any) -> str:
     return yaml.safe_dump(payload, sort_keys=False, default_flow_style=False)
 
 
-# ── Intent dataclass ──────────────────────────────────────────────────────────
+# -- Intent dataclass ----------------------------------------------------------
 
 @dataclass
 class IntentResult:
@@ -72,7 +72,7 @@ class IntentResult:
     extra: Dict[str, Any] = field(default_factory=dict)
 
 
-# ── Mock data ─────────────────────────────────────────────────────────────────
+# -- Mock data -----------------------------------------------------------------
 
 MOCK_K8S_DATA = {
     "payments-api": {
@@ -227,7 +227,7 @@ MOCK_K8S_DATA = {
 }
 
 
-# ── Read Agent ────────────────────────────────────────────────────────────────
+# -- Read Agent ----------------------------------------------------------------
 
 class ReadAgent:
 
@@ -303,7 +303,7 @@ class ReadAgent:
             return "copilot"
         return self._ai_provider
 
-    # ── Main entrypoint ───────────────────────────────────────────────────────
+    # -- Main entrypoint -------------------------------------------------------
 
     def process_query(
         self,
@@ -532,7 +532,7 @@ class ReadAgent:
                 session_id=session_id,
             )
 
-        # List apps — no cluster needed
+        # List apps - no cluster needed
         if intent.intent_type == "list_apps":
             allowed = get_user_allowed_apps(user, db)
             if allowed == ["*"]:
@@ -838,7 +838,7 @@ class ReadAgent:
         return ChatQueryResponse(answer=answer, data=raw_data,
                                  clusters_accessed=clusters_accessed, session_id=session_id)
 
-    # ── Intent parser (keyword, no AI) ────────────────────────────────────────
+    # -- Intent parser (keyword, no AI) ----------------------------------------
 
     def _parse_intent(self, query: str) -> IntentResult:
         """Parse raw user text into a normalized intent object and extracted fields."""
@@ -1072,6 +1072,8 @@ class ReadAgent:
             intent_type = force_list_intent
 
         namespace = self._extract_namespace(q)
+        if namespace and re.search(r"\b(?:select|set|use|choose)?\s*namespace\b", q):
+            intent_type = "namespace_select"
         if not namespace and intent_type not in {"describe_pod", "logs", "pod_select", "general_chat"}:
             token_match = re.fullmatch(r"[a-z0-9][a-z0-9._-]*", q.strip())
             if token_match:
@@ -1442,7 +1444,7 @@ class ReadAgent:
         unique_names = sorted(set(names))
         return unique_names[0] if len(unique_names) == 1 else None
 
-    # ── Registry ─────────────────────────────────────────────────────────────
+    # -- Registry -------------------------------------------------------------
 
     def _get_registry_entries(self, intent: IntentResult, db: Session) -> List[ClusterRegistry]:
         """Fetch active registry rows for intent app/environment targeting."""
@@ -1458,7 +1460,7 @@ class ReadAgent:
                 return env_rows
         return q.all()
 
-    # ── Mock data ─────────────────────────────────────────────────────────────
+    # -- Mock data -------------------------------------------------------------
 
     def _mock_data(self, intent: IntentResult, app_name: str) -> Dict[str, Any]:
         """Return deterministic mock Kubernetes data for local/demo operation modes."""
@@ -1714,7 +1716,7 @@ class ReadAgent:
                     "cluster": app["where"]["cluster"],
                     "namespace": app["quota"]["namespace"]}
 
-    # ── Real K8s ──────────────────────────────────────────────────────────────
+    # -- Real K8s --------------------------------------------------------------
 
     def _execute_k8s_read(self, intent: IntentResult, reg: ClusterRegistry) -> Dict[str, Any]:
         """Execute read-only Kubernetes operations against a resolved cluster context."""
@@ -2082,7 +2084,7 @@ class ReadAgent:
 
         raise ValueError("Unsupported mutation intent")
 
-    # ── Summary ───────────────────────────────────────────────────────────────
+    # -- Summary ---------------------------------------------------------------
 
     def _generate_summary(self, query, raw_data, intent, user, chat_mode: str = "k8-info") -> str:
         """Build final answer text using AI when available, else plain-text formatter."""
@@ -2151,7 +2153,7 @@ class ReadAgent:
             model=settings.anthropic_model,
             max_tokens=500,
             system=(
-                "You are K8S-AI, a Kubernetes operations assistant. "
+                "You are UNIPLANE AI, a Kubernetes operations assistant. "
                 f"User: {user.username} ({user.role}). "
                 "Summarise the data clearly. Flag CrashLoopBackOff, OOMKilled, "
                 "high restarts, or quota above 80%. Under 250 words. Plain text."
@@ -2168,7 +2170,7 @@ class ReadAgent:
     def _github_models_summary(self, query, raw_data, user) -> str:
         """Generate operational summary text through GitHub Models chat endpoint."""
         system_prompt = (
-            "You are K8S-AI, a Kubernetes operations assistant. "
+            "You are UNIPLANE AI, a Kubernetes operations assistant. "
             f"User: {user.username} ({user.role}). "
             "Summarise the data clearly. Flag CrashLoopBackOff, OOMKilled, "
             "high restarts, or quota above 80%. Under 250 words. Plain text."
@@ -2220,7 +2222,7 @@ class ReadAgent:
             model=settings.anthropic_model,
             max_tokens=500,
             system=(
-                "You are K8S-AI assistant in a Kubernetes platform chat. "
+                "You are UNIPLANE AI assistant in a Kubernetes platform chat. "
                 "Answer user questions clearly and concisely. "
                 "If asked non-Kubernetes topics, still answer helpfully."
             ),
@@ -2236,7 +2238,7 @@ class ReadAgent:
     def _github_models_general_chat(self, query: str, user: User, context: Dict[str, Any]) -> str:
         """Generate general conversational response via GitHub Models endpoint."""
         system_prompt = (
-            "You are K8S-AI assistant in a Kubernetes platform chat. "
+            "You are UNIPLANE AI assistant in a Kubernetes platform chat. "
             "Answer user questions clearly and concisely. "
             "If asked non-Kubernetes topics, still answer helpfully."
         )
@@ -2283,7 +2285,7 @@ class ReadAgent:
         can_edit = chat_mode in {"k8-agent", "k8-autofix"}
         is_demo = any("demo" in c or "mock" in c for c in raw_data.keys())
         if is_demo:
-            lines.append("[ DEMO MODE — no live cluster connected. Showing sample data. ]\n")
+            lines.append("[ DEMO MODE - no live cluster connected. Showing sample data. ]\n")
 
         for cluster, data in raw_data.items():
             label = cluster.replace(" (demo)", "").replace(" (mock)", "")
@@ -2303,25 +2305,25 @@ class ReadAgent:
             if "pods" in data:
                 pods = data["pods"]
                 running = sum(1 for p in pods if p.get("status") == "Running")
-                lines.append(f"Pods — '{intent.app_name}' — {label}")
+                lines.append(f"Pods - '{intent.app_name}' - {label}")
                 lines.append(f"  {running}/{len(pods)} pods running\n")
                 for p in pods:
                     status = p.get("status", "?")
                     ready = p.get("ready", "?")
                     restarts = p.get("restarts", 0)
-                    flag = "⚠ " if restarts > 0 else ""
+                    flag = "? " if restarts > 0 else ""
                     lines.append(f"  - {flag}{p.get('name','?')}")
                     lines.append(f"    Age          : {p.get('age','?')}")
                     lines.append(f"    Status       : {status}")
                     lines.append(f"    Pods running : {ready}")
                 crash = [p for p in pods if p.get("status") == "CrashLoopBackOff"]
                 if crash:
-                    lines.append(f"\n  ⚠ {len(crash)} pod(s) in CrashLoopBackOff")
+                    lines.append(f"\n  ? {len(crash)} pod(s) in CrashLoopBackOff")
                     lines.append("    Likely causes: app crash on startup, bad env var, or missing config.")
                     lines.append("    Action: check logs with 'logs <pod-name>'")
                 pending = [p for p in pods if p.get("status") == "Pending"]
                 if pending:
-                    lines.append(f"\n  ⚠ {len(pending)} pod(s) Pending — may be waiting for node resources.")
+                    lines.append(f"\n  ? {len(pending)} pod(s) Pending - may be waiting for node resources.")
                 if pods:
                     lines.append("\n  Tip: select a pod first using 'select pod <pod-name>' to enable quick 'describe' and 'logs'.")
 
@@ -2329,7 +2331,7 @@ class ReadAgent:
             if "pod_description" in data:
                 pd = data.get("pod_description") or {}
                 if pd.get("error"):
-                    lines.append(f"\nPod Describe — {label}")
+                    lines.append(f"\nPod Describe - {label}")
                     lines.append(f"  Error: {pd.get('error')}")
                 else:
                     lines.append(f"\nName:           {pd.get('name', '?')}")
@@ -2446,7 +2448,7 @@ class ReadAgent:
             # NAMESPACES
             if "namespaces" in data:
                 namespaces = data["namespaces"]
-                lines.append(f"Namespaces — {label}")
+                lines.append(f"Namespaces - {label}")
                 lines.append(f"  Found {len(namespaces)} namespace(s)\n")
                 for n in namespaces:
                     lines.append(f"  - {n.get('name', '?')} ({n.get('status', 'Unknown')})")
@@ -2455,7 +2457,7 @@ class ReadAgent:
             if "nodes" in data:
                 nodes = data["nodes"]
                 ready = sum(1 for n in nodes if n.get("status") == "Ready")
-                lines.append(f"\nCluster Nodes — {label}")
+                lines.append(f"\nCluster Nodes - {label}")
                 lines.append(f"  Ready: {ready}/{len(nodes)}")
                 for n in nodes:
                     roles = ",".join(n.get("roles") or ["worker"])
@@ -2467,7 +2469,7 @@ class ReadAgent:
             # QUOTA
             if "quota" in data and data["quota"]:
                 q = data["quota"]
-                lines.append(f"\nResource Quota — {label}")
+                lines.append(f"\nResource Quota - {label}")
                 qname = q.get('name') or '-'
                 lines.append(f"  Name   : {qname}")
                 cpu_pct = q.get("cpu_percent", 0) or 0
@@ -2478,27 +2480,27 @@ class ReadAgent:
                 if qname != '-' and can_edit:
                     lines.append(f"  Edit   : edit resourcequota {qname}")
                 if cpu_pct > 80:
-                    lines.append("  ⚠ CPU usage above 80% — consider increasing limits or scaling out")
+                    lines.append("  ? CPU usage above 80% - consider increasing limits or scaling out")
                 if mem_pct > 80:
-                    lines.append("  ⚠ Memory usage above 80% — risk of OOMKilled pods")
+                    lines.append("  ? Memory usage above 80% - risk of OOMKilled pods")
 
             # HPA
             if "hpas" in data:
                 for h in data["hpas"]:
-                    lines.append(f"\nHPA — {h.get('name','?')} — {label}")
+                    lines.append(f"\nHPA - {h.get('name','?')} - {label}")
                     lines.append(f"  Replicas : {h.get('current_replicas','?')} now  |  min {h.get('min_replicas','?')}  max {h.get('max_replicas','?')}")
                     lines.append(f"  CPU load : {h.get('current_cpu_percent','?')}% current  |  {h.get('target_cpu_percent','?')}% target")
                     if (h.get("current_cpu_percent") or 0) > (h.get("target_cpu_percent") or 100):
-                        lines.append("  ⚠ CPU above target — HPA may be scaling up soon")
+                        lines.append("  ? CPU above target - HPA may be scaling up soon")
 
             # INGRESS
             if "ingresses" in data:
-                lines.append(f"\nIngress & Network — {label}")
+                lines.append(f"\nIngress & Network - {label}")
                 for i in data["ingresses"]:
                     iname = i.get('name','?')
                     lines.append(f"  - {iname}")
                     lines.append(f"    Host    : {i.get('host','?')}")
-                    lines.append(f"    TLS     : {'Enabled ✓' if i.get('tls_enabled') else 'Disabled ⚠'}")
+                    lines.append(f"    TLS     : {'Enabled ?' if i.get('tls_enabled') else 'Disabled ?'}")
                     lines.append(f"    Address : {i.get('address') or 'pending...'}")
                     if intent.intent_type == "ingress":
                         lines.append(f"    Try     : describe ingress {iname}")
@@ -2509,11 +2511,11 @@ class ReadAgent:
 
             # DEPLOYMENTS
             if "deployments" in data and intent.intent_type == "deployments":
-                lines.append(f"\nDeployments — {label}")
+                lines.append(f"\nDeployments - {label}")
                 for d in data["deployments"]:
                     ready = d.get("ready_replicas", 0)
                     total = d.get("replicas", 0)
-                    flag = "⚠ " if ready < total else ""
+                    flag = "? " if ready < total else ""
                     dname = d.get('name','?')
                     lines.append(f"  - {flag}{dname}")
                     lines.append(f"    Age          : {d.get('age','?')}")
@@ -2524,17 +2526,17 @@ class ReadAgent:
 
             if "deployment_manifest" in data and intent.intent_type in {"deployment_manifest", "deployment_edit"}:
                 if data.get("error"):
-                    lines.append(f"\nDeployment Manifest — {label}")
+                    lines.append(f"\nDeployment Manifest - {label}")
                     lines.append(f"  Error: {data.get('error')}")
                 elif data.get("deployment_names"):
-                    lines.append(f"\nDeployment Manifest — {label}")
+                    lines.append(f"\nDeployment Manifest - {label}")
                     lines.append("  Multiple deployments found:")
                     for name in data.get("deployment_names", []):
                         lines.append(f"  - {name}")
                     lines.append("  Use: show deployment <name> in namespace <ns> for <app>")
                 else:
-                    title = "Deployment Edit — Config" if intent.intent_type == "deployment_edit" else "Deployment Manifest"
-                    lines.append(f"\n{title} — {label}")
+                    title = "Deployment Edit - Config" if intent.intent_type == "deployment_edit" else "Deployment Manifest"
+                    lines.append(f"\n{title} - {label}")
                     lines.append(f"Name: {data.get('deployment_name') or '?'}")
                     manifest = data.get("deployment_manifest") or {}
                     lines.append(_to_yaml(manifest))
@@ -2549,27 +2551,27 @@ class ReadAgent:
                         lines.append(f"  - update deployment {dep_name} image <image:tag>")
 
             if "service_manifest" in data and intent.intent_type == "service_edit":
-                lines.append(f"\nService Edit — Config — {label}")
+                lines.append(f"\nService Edit - Config - {label}")
                 lines.append(f"Name: {data.get('service_name') or '?'}")
                 lines.append(_to_yaml(data.get("service_manifest") or {}))
 
             if "ingress_manifest" in data and intent.intent_type == "ingress_edit":
-                lines.append(f"\nIngress Edit — Config — {label}")
+                lines.append(f"\nIngress Edit - Config - {label}")
                 lines.append(f"Name: {data.get('ingress_name') or '?'}")
                 lines.append(_to_yaml(data.get("ingress_manifest") or {}))
 
             if "secret_manifest" in data and intent.intent_type == "secret_edit":
-                lines.append(f"\nSecret Edit — Config — {label}")
+                lines.append(f"\nSecret Edit - Config - {label}")
                 lines.append(f"Name: {data.get('secret_name') or '?'}")
                 lines.append(_to_yaml(data.get("secret_manifest") or {}))
 
             if "resourcequota_manifest" in data and intent.intent_type == "resourcequota_edit":
-                lines.append(f"\nResourceQuota Edit — Config — {label}")
+                lines.append(f"\nResourceQuota Edit - Config - {label}")
                 lines.append(f"Name: {data.get('resourcequota_name') or '?'}")
                 lines.append(_to_yaml(data.get("resourcequota_manifest") or {}))
 
             if "services" in data and intent.intent_type == "services":
-                lines.append(f"\nServices — {label}")
+                lines.append(f"\nServices - {label}")
                 for s in data["services"]:
                     sname = s.get('name','?')
                     lines.append(f"  - {sname}")
@@ -2581,7 +2583,7 @@ class ReadAgent:
                         lines.append(f"    Edit     : edit service {sname}")
 
             if "secrets" in data and intent.intent_type == "secrets":
-                lines.append(f"\nSecrets (metadata only) — {label}")
+                lines.append(f"\nSecrets (metadata only) - {label}")
                 for s in data["secrets"]:
                     sname = s.get('name','?')
                     lines.append(f"  - {sname} ({s.get('type','?')})")
@@ -2594,25 +2596,25 @@ class ReadAgent:
                         lines.append(f"    Edit     : edit secret {sname}")
 
             if "deployment_description" in data and intent.intent_type == "deployment_describe":
-                lines.append(f"\nDeployment Description — {label}")
+                lines.append(f"\nDeployment Description - {label}")
                 lines.append(_to_yaml(data.get("deployment_description") or {}))
 
             if "service_description" in data and intent.intent_type == "service_describe":
-                lines.append(f"\nService Description — {label}")
+                lines.append(f"\nService Description - {label}")
                 lines.append(_to_yaml(data.get("service_description") or {}))
 
             if "ingress_description" in data and intent.intent_type == "ingress_describe":
-                lines.append(f"\nIngress Description — {label}")
+                lines.append(f"\nIngress Description - {label}")
                 lines.append(_to_yaml(data.get("ingress_description") or {}))
 
             if "secret_description" in data and intent.intent_type == "secret_describe":
-                lines.append(f"\nSecret Description (metadata only) — {label}")
+                lines.append(f"\nSecret Description (metadata only) - {label}")
                 lines.append(_to_yaml(data.get("secret_description") or {}))
 
             if "deployment_update" in data:
                 upd = data.get("deployment_update") or {}
                 op = data.get("operation") or {}
-                lines.append(f"\nDeployment Updated — {label}")
+                lines.append(f"\nDeployment Updated - {label}")
                 lines.append(f"  Name       : {upd.get('name', '?')}")
                 lines.append(f"  Namespace  : {upd.get('namespace', '?')}")
                 if op.get("replicas") is not None:
@@ -2622,7 +2624,7 @@ class ReadAgent:
 
             if "service_update" in data:
                 upd = data.get("service_update") or {}
-                lines.append(f"\nService Updated — {label}")
+                lines.append(f"\nService Updated - {label}")
                 lines.append(f"  Name       : {upd.get('name', '?')}")
                 lines.append(f"  Namespace  : {upd.get('namespace', '?')}")
                 lines.append(f"  Type       : {upd.get('type', '?')}")
@@ -2632,14 +2634,14 @@ class ReadAgent:
 
             if "ingress_update" in data:
                 upd = data.get("ingress_update") or {}
-                lines.append(f"\nIngress Updated — {label}")
+                lines.append(f"\nIngress Updated - {label}")
                 lines.append(f"  Name       : {upd.get('name', '?')}")
                 lines.append(f"  Namespace  : {upd.get('namespace', '?')}")
                 lines.append(f"  Host       : {upd.get('host', '?')}")
 
             if "secret_update" in data:
                 upd = data.get("secret_update") or {}
-                lines.append(f"\nSecret Updated — {label}")
+                lines.append(f"\nSecret Updated - {label}")
                 lines.append(f"  Name       : {upd.get('name', '?')}")
                 lines.append(f"  Namespace  : {upd.get('namespace', '?')}")
                 lines.append(f"  Updated key: {upd.get('updated_key', '?')}")
@@ -2647,7 +2649,7 @@ class ReadAgent:
 
             if "resourcequota_update" in data:
                 upd = data.get("resourcequota_update") or {}
-                lines.append(f"\nResourceQuota Updated — {label}")
+                lines.append(f"\nResourceQuota Updated - {label}")
                 lines.append(f"  Name       : {upd.get('name', '?')}")
                 lines.append(f"  Namespace  : {upd.get('namespace', '?')}")
                 hard = upd.get("hard") or {}
@@ -2656,13 +2658,13 @@ class ReadAgent:
 
             # LOGS
             if "logs" in data:
-                lines.append(f"\nLogs (last {data.get('tail_lines', 100)} lines) — {data.get('pod','?')} — {label}")
+                lines.append(f"\nLogs (last {data.get('tail_lines', 100)} lines) - {data.get('pod','?')} - {label}")
                 lines.append(data.get("logs", "No logs available"))
 
             # IMAGE PULL TROUBLESHOOTING
             if "image_pull_analysis" in data:
                 ipa = data.get("image_pull_analysis") or {}
-                lines.append(f"\nImage Pull Troubleshooting — {label}")
+                lines.append(f"\nImage Pull Troubleshooting - {label}")
                 lines.append(f"  Namespace: {ipa.get('namespace', '?')}")
                 checked = ipa.get("pods_checked") or []
                 lines.append(f"  Pods checked: {len(checked)}")
@@ -2689,7 +2691,7 @@ class ReadAgent:
             # GENERAL K8S ISSUE TROUBLESHOOTING
             if "k8s_issue_analysis" in data:
                 kia = data.get("k8s_issue_analysis") or {}
-                lines.append(f"\nKubernetes Troubleshooting — {label}")
+                lines.append(f"\nKubernetes Troubleshooting - {label}")
                 lines.append(f"  Namespace: {kia.get('namespace', '?')}")
                 checked = kia.get("pods_checked") or []
                 lines.append(f"  Pods checked: {len(checked)}")
@@ -2712,7 +2714,7 @@ class ReadAgent:
 
             # VERSION
             if "k8s_version" in data and intent.intent_type == "version":
-                lines.append(f"\nKubernetes server version — {label}: {data['k8s_version']}")
+                lines.append(f"\nKubernetes server version - {label}: {data['k8s_version']}")
 
         if not lines:
             lines.append(f"No data found for: {query}")
@@ -2720,7 +2722,7 @@ class ReadAgent:
 
         return "\n".join(lines)
 
-    # ── Audit ─────────────────────────────────────────────────────────────────
+    # -- Audit -----------------------------------------------------------------
 
     def _write_audit(
         self,

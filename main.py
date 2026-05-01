@@ -1,7 +1,7 @@
-"""
+﻿"""
 main.py
 -------
-FastAPI application entry point for K8S-AI Platform — Phase 1.
+FastAPI application entry point for UNIPLANE AI Platform - Phase 1.
 
 Startup sequence
 ----------------
@@ -39,7 +39,7 @@ from api import (
     admin_db_router,
 )
 
-# ── Logging ───────────────────────────────────────────────────────────────────
+# -- Logging -------------------------------------------------------------------
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -48,7 +48,7 @@ logger = logging.getLogger("k8s_ai")
 settings = get_settings()
 
 
-# ── Lifespan (startup / shutdown) ─────────────────────────────────────────────
+# -- Lifespan (startup / shutdown) ---------------------------------------------
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI):
     Runs on startup: initialise DB and cluster gateway.
     Runs on shutdown: clean up connections.
     """
-    logger.info("=== K8S-AI Platform starting (Phase 1) ===")
+    logger.info("=== UNIPLANE AI Platform starting (Phase 1) ===")
 
     # 1. Create database tables
     try:
@@ -70,20 +70,20 @@ async def lifespan(app: FastAPI):
     try:
         gateway = get_gateway()
         count = gateway.get_connected_count()
-        logger.info("Cluster gateway ready — %d cluster(s) loaded", count)
+        logger.info("Cluster gateway ready - %d cluster(s) loaded", count)
     except Exception as exc:
         logger.warning("Cluster gateway init warning: %s", exc)
 
     logger.info("=== Startup complete. Listening on port 8000 ===")
     yield
 
-    logger.info("=== K8S-AI Platform shutting down ===")
+    logger.info("=== UNIPLANE AI Platform shutting down ===")
 
 
-# ── App factory ───────────────────────────────────────────────────────────────
+# -- App factory ---------------------------------------------------------------
 
 app = FastAPI(
-    title="K8S-AI Platform",
+    title="UNIPLANE AI Platform",
     description=(
         "AI-powered Kubernetes management platform. "
         "Phase 1: Multi-cluster read-only queries with RBAC auth."
@@ -94,7 +94,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# ── CORS ──────────────────────────────────────────────────────────────────────
+# -- CORS ----------------------------------------------------------------------
 
 app.add_middleware(
     CORSMiddleware,
@@ -104,13 +104,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Static files ──────────────────────────────────────────────────────────────
+# -- Static files --------------------------------------------------------------
 
 static_dir = Path(__file__).parent / "ui" / "static"
 static_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
-# ── API Routers ───────────────────────────────────────────────────────────────
+# -- API Routers ---------------------------------------------------------------
 
 app.include_router(auth_router)
 app.include_router(registry_router)
@@ -121,7 +121,7 @@ app.include_router(mcp_router)
 app.include_router(admin_db_router)
 
 
-# ── UI route ──────────────────────────────────────────────────────────────────
+# -- UI route ------------------------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def serve_ui():
@@ -129,7 +129,7 @@ def serve_ui():
     template_path = Path(__file__).parent / "ui" / "templates" / "index.html"
     if template_path.exists():
         return HTMLResponse(content=template_path.read_text(encoding='utf-8'))
-    return HTMLResponse("<h1>K8S-AI Platform</h1><p>UI not found. See /docs</p>")
+    return HTMLResponse("<h1>UNIPLANE AI Platform</h1><p>UI not found. See /docs</p>")
 
 
 @app.get("/admin/db", response_class=HTMLResponse, include_in_schema=False)
@@ -141,7 +141,7 @@ def serve_admin_db_ui():
     return HTMLResponse("<h1>Admin DB UI not found</h1>", status_code=404)
 
 
-# ── Health check ──────────────────────────────────────────────────────────────
+# -- Health check --------------------------------------------------------------
 
 @app.get("/health", response_model=HealthResponse, tags=["System"])
 def health_check():
@@ -169,7 +169,7 @@ def health_check():
     )
 
 
-# ── Global exception handler ──────────────────────────────────────────────────
+# -- Global exception handler --------------------------------------------------
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):

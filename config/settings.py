@@ -1,8 +1,8 @@
-"""
+﻿"""
 config/settings.py
 ------------------
 Central configuration loaded from environment variables / .env file.
-All other modules import from here — never read os.environ directly.
+All other modules import from here - never read os.environ directly.
 """
 
 from pydantic_settings import BaseSettings
@@ -11,26 +11,26 @@ from functools import lru_cache
 
 
 class Settings(BaseSettings):
-    # ── Application ────────────────────────────────────────────HTML 
-    app_name: str = Field("K8S-AI Platform", alias="APP_NAME")
+    # -- Application --------------------------------------------HTML 
+    app_name: str = Field("UNIPLANE AI Platform", alias="APP_NAME")
     app_env: str = Field("development", alias="APP_ENV")
     debug: bool = Field(True, alias="DEBUG")
 
-    # ── JWT ────────────────────────────────────────────────────
+    # -- JWT ----------------------------------------------------
     jwt_secret_key: str = Field("change-me", alias="JWT_SECRET_KEY")
     jwt_algorithm: str = Field("HS256", alias="JWT_ALGORITHM")
     jwt_expire_minutes: int = Field(480, alias="JWT_EXPIRE_MINUTES")
 
-    # ── Database ───────────────────────────────────────────────
+    # -- Database -----------------------------------------------
     database_url: str = Field(
         "postgresql://k8sai:password@localhost:5432/k8sai_db",
         alias="DATABASE_URL",
     )
 
-    # ── Redis ──────────────────────────────────────────────────
+    # -- Redis --------------------------------------------------
     redis_url: str = Field("redis://localhost:6379/0", alias="REDIS_URL")
 
-    # ── AI ─────────────────────────────────────────────────────
+    # -- AI -----------------------------------------------------
     anthropic_api_key: str = Field("", alias="ANTHROPIC_API_KEY")
     anthropic_model: str = Field(
         "claude-sonnet-4-20250514", alias="ANTHROPIC_MODEL"
@@ -49,7 +49,7 @@ class Settings(BaseSettings):
         alias="GITHUB_MODELS_MODEL",
     )
 
-    # ── Kubernetes ─────────────────────────────────────────────
+    # -- Kubernetes ---------------------------------------------
     k8s_kubeconfig_paths: str = Field("", alias="K8S_KUBECONFIG_PATHS")
     k8s_use_in_cluster: bool = Field(False, alias="K8S_USE_IN_CLUSTER")
     mcp_enabled: bool = Field(False, alias="MCP_ENABLED")
@@ -60,15 +60,16 @@ class Settings(BaseSettings):
     mcp_aks_kubeconfig_paths: str = Field("", alias="MCP_AKS_KUBECONFIG_PATHS")
     mcp_datadog_targets: str = Field("", alias="MCP_DATADOG_TARGETS")
 
-    # ── Vault ──────────────────────────────────────────────────
+    # -- Vault --------------------------------------------------
     vault_url: str = Field("http://localhost:8200", alias="VAULT_URL")
     vault_token: str = Field("root", alias="VAULT_TOKEN")
 
-    # ── Datadog ────────────────────────────────────────────────
+    # -- Datadog ------------------------------------------------
     datadog_api_key: str = Field("", alias="DATADOG_API_KEY")
     datadog_app_key: str = Field("", alias="DATADOG_APP_KEY")
+    datadog_site: str = Field("datadoghq.com", alias="DATADOG_SITE")
 
-    # ── Safety guards ──────────────────────────────────────────
+    # -- Safety guards ------------------------------------------
     prod_mutation_require_approval: bool = Field(
         True, alias="PROD_MUTATION_REQUIRE_APPROVAL"
     )

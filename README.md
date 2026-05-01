@@ -1,4 +1,4 @@
-# K8S-AI Platform — Phase 1
+﻿# UNIPLANE AI Platform - Phase 1
 
 AI-powered Kubernetes management platform.
 **Phase 1**: Multi-cloud read-only queries with RBAC auth.
@@ -9,18 +9,18 @@ AI-powered Kubernetes management platform.
 
 | Capability | Status |
 |---|---|
-| JWT authentication (login / register) | ✅ |
-| App-ownership RBAC (user → app → namespace) | ✅ |
-| Multi-cluster gateway (GKE, EKS, AKS, Rancher) | ✅ |
-| Cluster registry (app → cluster → namespace mapping) | ✅ |
-| Natural-language query via Claude AI | ✅ |
-| Pods, namespaces, quota, deployments, HPA, ingress | ✅ |
-| Pod logs + describe | ✅ |
-| NetworkPolicy / firewall check | ✅ |
-| Immutable audit log | ✅ |
-| Chat UI (dark terminal theme) | ✅ |
-| REST API with Swagger docs | ✅ |
-| Unit tests | ✅ |
+| JWT authentication (login / register) | ? |
+| App-ownership RBAC (user ? app ? namespace) | ? |
+| Multi-cluster gateway (GKE, EKS, AKS, Rancher) | ? |
+| Cluster registry (app ? cluster ? namespace mapping) | ? |
+| Natural-language query via Claude AI | ? |
+| Pods, namespaces, quota, deployments, HPA, ingress | ? |
+| Pod logs + describe | ? |
+| NetworkPolicy / firewall check | ? |
+| Immutable audit log | ? |
+| Chat UI (dark terminal theme) | ? |
+| REST API with Swagger docs | ? |
+| Unit tests | ? |
 
 ---
 
@@ -28,52 +28,52 @@ AI-powered Kubernetes management platform.
 
 ```
 k8s_ai_platform/
-├── main.py                     # FastAPI app entry point
-├── requirements.txt
-├── .env.example
-│
-├── config/
-│   └── settings.py             # Pydantic settings from .env
-│
-├── models/
-│   ├── database.py             # SQLAlchemy ORM models
-│   └── schemas.py              # Pydantic request/response schemas
-│
-├── auth/
-│   ├── jwt_handler.py          # Token creation, decoding, password hashing
-│   ├── rbac.py                 # App-ownership access checks
-│   └── auth_service.py         # Login, register, session logic
-│
-├── gateway/
-│   └── cluster_gateway.py      # Multi-cluster K8s client manager
-│
-├── capabilities/
-│   └── k8s_reader.py           # All K8s read operations
-│
-├── agents/
-│   └── read_agent.py           # AI intent parser + query orchestrator
-│
-├── api/
-│   ├── auth_router.py          # /api/auth/* endpoints
-│   ├── registry_router.py      # /api/registry/* endpoints
-│   ├── chat_router.py          # /api/chat/* endpoints
-│   ├── k8s_router.py           # /api/k8s/* endpoints
-│   └── audit_router.py         # /api/audit/* endpoints
-│
-├── utils/
-│   └── audit.py                # Audit log query helpers
-│
-├── ui/
-│   └── templates/
-│       └── index.html          # Chat UI
-│
-├── scripts/
-│   └── seed_db.py              # Demo data seeder
-│
-└── tests/
-    ├── conftest.py
-    ├── test_auth.py
-    └── test_k8s_reader.py
++-- main.py                     # FastAPI app entry point
++-- requirements.txt
++-- .env.example
+-
++-- config/
+-   +-- settings.py             # Pydantic settings from .env
+-
++-- models/
+-   +-- database.py             # SQLAlchemy ORM models
+-   +-- schemas.py              # Pydantic request/response schemas
+-
++-- auth/
+-   +-- jwt_handler.py          # Token creation, decoding, password hashing
+-   +-- rbac.py                 # App-ownership access checks
+-   +-- auth_service.py         # Login, register, session logic
+-
++-- gateway/
+-   +-- cluster_gateway.py      # Multi-cluster K8s client manager
+-
++-- capabilities/
+-   +-- k8s_reader.py           # All K8s read operations
+-
++-- agents/
+-   +-- read_agent.py           # AI intent parser + query orchestrator
+-
++-- api/
+-   +-- auth_router.py          # /api/auth/* endpoints
+-   +-- registry_router.py      # /api/registry/* endpoints
+-   +-- chat_router.py          # /api/chat/* endpoints
+-   +-- k8s_router.py           # /api/k8s/* endpoints
+-   +-- audit_router.py         # /api/audit/* endpoints
+-
++-- utils/
+-   +-- audit.py                # Audit log query helpers
+-
++-- ui/
+-   +-- templates/
+-       +-- index.html          # Chat UI
+-
++-- scripts/
+-   +-- seed_db.py              # Demo data seeder
+-
++-- tests/
+    +-- conftest.py
+    +-- test_auth.py
+    +-- test_k8s_reader.py
 ```
 
 ---
@@ -154,10 +154,10 @@ python scripts/seed_db.py
 ```
 
 This creates 4 demo users (password: `demo1234`):
-- `priya` — developer — payments-api, billing-service
-- `james` — infra-admin — all apps
-- `aisha` — developer — auth-service, user-mgmt
-- `bob` — developer — web-frontend
+- `priya` - developer - payments-api, billing-service
+- `james` - infra-admin - all apps
+- `aisha` - developer - auth-service, user-mgmt
+- `bob` - developer - web-frontend
 
 ### 5. Run the server
 

@@ -1,7 +1,7 @@
-"""
+﻿"""
 auth/rbac.py
 ------------
-Role-Based Access Control for the K8S-AI platform.
+Role-Based Access Control for the UNIPLANE AI Platform.
 
 Core concept
 ------------
@@ -35,7 +35,7 @@ from auth.jwt_handler import decode_access_token, is_token_blacklisted
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 
-# ── Current user extraction ───────────────────────────────────────────────────
+# -- Current user extraction ---------------------------------------------------
 
 def get_current_user(
     token: str = Depends(oauth2_scheme),
@@ -126,7 +126,7 @@ def get_current_active_user(
     return current_user
 
 
-# ── Role helpers ──────────────────────────────────────────────────────────────
+# -- Role helpers --------------------------------------------------------------
 
 def is_infra_admin(user: User) -> bool:
     """
@@ -167,7 +167,7 @@ def is_team_lead_or_above(user: User) -> bool:
     return user.role in ("team-lead", "infra-admin")
 
 
-# ── App-level permission checks ───────────────────────────────────────────────
+# -- App-level permission checks -----------------------------------------------
 
 def check_app_access(user: User, app_name: str, db: Session) -> bool:
     """
@@ -315,7 +315,7 @@ def require_mutation_permission(user: User, app_name: str, db: Session) -> None:
         )
 
 
-# ── Bulk helpers ──────────────────────────────────────────────────────────────
+# -- Bulk helpers --------------------------------------------------------------
 
 def get_user_allowed_apps(user: User, db: Session) -> List[str]:
     """
