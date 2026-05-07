@@ -93,12 +93,19 @@ k8s_ai_platform/
 Windows PowerShell:
 
 ```powershell
-python -m venv venv
-.\venv\Scripts\Activate.ps1
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
+Recommended Python version: `3.11` or `3.12`.
+
 ### 2) Configure environment
+
+The repository now includes a committed base config at `config/app.env`.
+That file is loaded automatically, so you only need a project-root `.env`
+if you want machine-specific overrides.
 
 ```powershell
 Copy-Item .env.example .env
@@ -112,6 +119,18 @@ Set at minimum:
 	- `ANTHROPIC_API_KEY`
 	- `GITHUB_MODELS_TOKEN`
 
+For the simplest local setup, update `config/app.env` or override values in `.env`:
+
+```env
+JWT_SECRET_KEY=put-a-long-random-secret-here
+DATABASE_URL=sqlite:///./k8sai.db
+K8S_KUBECONFIG_PATHS=~/.kube/config
+```
+
+Recommended approach:
+- Keep shared defaults in `config/app.env`
+- Keep only machine-specific changes in `.env`
+
 Optional MCP/Datadog settings:
 - `MCP_ENABLED`
 - `MCP_CLUSTER_ENDPOINTS`
@@ -122,7 +141,7 @@ Optional MCP/Datadog settings:
 - `DATADOG_APP_KEY`
 - `DATADOG_SITE`
 
-### 3) Start Postgres (if using local Docker)
+### 3) Start Postgres (optional, if not using SQLite)
 
 ```powershell
 docker run -d --name k8sai-postgres -e POSTGRES_USER=k8sai -e POSTGRES_PASSWORD=password -e POSTGRES_DB=k8sai_db -p 5432:5432 postgres:15
@@ -143,7 +162,7 @@ Demo users (password: `demo1234`):
 ### 5) Run the app
 
 ```powershell
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 Open:

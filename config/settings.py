@@ -1,13 +1,19 @@
 ﻿"""
 config/settings.py
 ------------------
-Central configuration loaded from environment variables / .env file.
+Central configuration loaded from environment variables and env files.
 All other modules import from here - never read os.environ directly.
 """
 
+from pathlib import Path
 from pydantic_settings import BaseSettings
 from pydantic import Field
 from functools import lru_cache
+
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+DEFAULT_ENV_FILE = BASE_DIR / "config" / "app.env"
+LOCAL_ENV_FILE = BASE_DIR / ".env"
 
 
 class Settings(BaseSettings):
@@ -75,7 +81,10 @@ class Settings(BaseSettings):
     )
     max_memory_limit_gb: int = Field(10, alias="MAX_MEMORY_LIMIT_GB")
 
-    model_config = {"env_file": ".env", "populate_by_name": True}
+    model_config = {
+        "env_file": (str(DEFAULT_ENV_FILE), str(LOCAL_ENV_FILE)),
+        "populate_by_name": True,
+    }
 
 
 @lru_cache

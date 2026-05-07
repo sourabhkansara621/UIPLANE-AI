@@ -104,14 +104,14 @@ class ClusterGateway:
         ]
 
         for kubeconfig_path in kubeconfig_paths:
-            path = Path(kubeconfig_path)
+            path = Path(kubeconfig_path).expanduser()
             if not path.exists():
-                logger.warning("Kubeconfig not found: %s", kubeconfig_path)
+                logger.warning("Kubeconfig not found: %s", path)
                 continue
             try:
                 self._load_contexts_from_file(str(path))
             except Exception as exc:
-                logger.error("Error loading kubeconfig %s: %s", kubeconfig_path, exc)
+                logger.error("Error loading kubeconfig %s: %s", path, exc)
 
         # Load clusters from MCP endpoints if enabled
         if settings.mcp_enabled:
@@ -132,14 +132,14 @@ class ClusterGateway:
             provider_paths.extend([p.strip() for p in raw_paths.split(",") if p.strip()])
 
         for kubeconfig_path in provider_paths:
-            path = Path(kubeconfig_path)
+            path = Path(kubeconfig_path).expanduser()
             if not path.exists():
-                logger.warning("MCP kubeconfig not found: %s", kubeconfig_path)
+                logger.warning("MCP kubeconfig not found: %s", path)
                 continue
             try:
                 self._load_contexts_from_file(str(path))
             except Exception as exc:
-                logger.error("Error loading MCP kubeconfig %s: %s", kubeconfig_path, exc)
+                logger.error("Error loading MCP kubeconfig %s: %s", path, exc)
 
     def _load_contexts_from_file(self, kubeconfig_file: str) -> None:
         """
