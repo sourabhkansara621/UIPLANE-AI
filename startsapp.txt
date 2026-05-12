@@ -13,3 +13,12 @@ stoping app--> ctrl+c
 
 
 select namespace should be higlighted 
+
+
+DB full-access commands:
+
+Only grant full access for all existing users:
+python scripts/seed_db.py --full-access --skip-seed
+
+Seed demo data and then grant full access:
+python scripts/seed_db.py --full-access

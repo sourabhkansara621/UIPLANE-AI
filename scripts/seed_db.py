@@ -9,6 +9,7 @@ Run once after first startup:
 This creates the same data as the Phase 1 demo UI so you can test immediately.
 """
 
+import argparse
 import sys
 import uuid
 from pathlib import Path
@@ -177,5 +178,70 @@ def seed():
         db.close()
 
 
+def _print_current_users(db, heading):
+    print(f"\n{heading}")
+    users = db.query(User).order_by(User.username).all()
+    if not users:
+        print("  No users found")
+        return
+
+    for user in users:
+        print(f"  - {user.username} | role={user.role} | active={user.is_active}")
+
+
+def grant_all_users_full_access():
+    """Promote all users to infra-admin and set ownership rows to read/write."""
+    create_tables()
+    db = SessionLocal()
+
+    try:
+        _print_current_users(db, "Current database users (before update):")
+
+        updated_users = (
+            db.query(User)
+            .update({"role": "infra-admin", "is_active": True}, synchronize_session=False)
+        )
+        updated_ownerships = (
+            db.query(AppOwnership)
+            .update({"can_read": True, "can_mutate": True}, synchronize_session=False)
+        )
+        db.commit()
+
+        print("\nFull-access update applied.")
+        print(f"  Users updated: {updated_users}")
+        print(f"  Ownership rows updated: {updated_ownerships}")
+        _print_current_users(db, "Current database users (after update):")
+    except Exception as exc:
+        db.rollback()
+        print(f"Full-access update failed: {exc}")
+        raise
+    finally:
+        db.close()
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Seed demo DB and optionally grant full access to all users"
+    )
+    parser.add_argument(
+        "--full-access",
+        action="store_true",
+        help="Set all users to infra-admin and all app ownership rows to read/write",
+    )
+    parser.add_argument(
+        "--skip-seed",
+        action="store_true",
+        help="Skip normal seed and only apply full-access update (use with --full-access)",
+    )
+
+    args = parser.parse_args()
+
+    if not args.skip_seed:
+        seed()
+
+    if args.full_access:
+        grant_all_users_full_access()
+
+
 if __name__ == "__main__":
-    seed()
+    main()

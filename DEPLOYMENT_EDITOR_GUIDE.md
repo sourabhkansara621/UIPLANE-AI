@@ -71,6 +71,12 @@ else:
 ### 2. Grant Mutation Permission
 If user doesn't have `can_mutate=True`, update the database:
 
+Recommended (grant all users full read/write + infra-admin in one command):
+
+```bash
+python scripts/seed_db.py --full-access --skip-seed
+```
+
 ```bash
 # Using SQLite CLI
 sqlite3 database.db

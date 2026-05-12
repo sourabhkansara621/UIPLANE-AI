@@ -153,6 +153,18 @@ docker run -d --name k8sai-postgres -e POSTGRES_USER=k8sai -e POSTGRES_PASSWORD=
 python scripts/seed_db.py
 ```
 
+Grant full access to all current users (single command):
+
+```powershell
+python scripts/seed_db.py --full-access --skip-seed
+```
+
+Seed demo data and then grant full access in one run:
+
+```powershell
+python scripts/seed_db.py --full-access
+```
+
 Demo users (password: `demo1234`):
 - `priya` (developer)
 - `james` (infra-admin)
