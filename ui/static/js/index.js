@@ -193,11 +193,20 @@
       document.getElementById('status-dot').style.background = 'var(--success)';
       document.getElementById('status-dot').style.boxShadow = '0 0 6px var(--success)';
 
+      // Start with no app/cluster selected so config cards stay hidden until explicit choice.
+      selectedApp = null;
+      selectedCluster = null;
+      localStorage.removeItem('k8sai_selected_app');
+      localStorage.removeItem('k8sai_selected_cluster');
+      // Reset session so backend does not restore prior app/cluster context on login.
+      chatSessionId = null;
+      localStorage.removeItem('k8sai_session_id');
+
       // Clear chat messages for fresh start
       document.getElementById('messages').innerHTML = '';
       
-      renderApps();
       await loadClusters();
+      renderApps();
       await loadSuggestions();
       await loadNamespaces();
       renderChatMode();
@@ -1133,7 +1142,8 @@
     function renderApps() {
       const list = document.getElementById('app-list');
       const apps = currentUser.allowed_apps.includes('*')
-        ? ['all apps (admin)'] : currentUser.allowed_apps;
+        ? getAdminAppGroups(cachedClusterEntries || [])
+        : currentUser.allowed_apps;
       list.innerHTML = apps.map(a => {
         const active = selectedApp === a ? ' active' : '';
         const appEsc = (a || '').replace(/'/g, "\\'");
@@ -1186,7 +1196,7 @@
       localStorage.setItem('k8sai_selected_app', appName);
 
       // Keep cluster highlight in sync when app has a mapped cluster.
-      const mapped = cachedClusterEntries.find(e => e.app_name === appName);
+      const mapped = resolveEntriesForSelection(appName, cachedClusterEntries || [])[0];
       if (mapped?.cluster_name) {
         selectedCluster = mapped.cluster_name;
         localStorage.setItem('k8sai_selected_cluster', selectedCluster);
@@ -1209,7 +1219,8 @@
         renderAutofixHistoryPanel();
         return;
       }
-      fillQuery(`list namespaces for ${appName}`);
+      const mappedAppName = resolveEntriesForSelection(appName, cachedClusterEntries || [])[0]?.app_name || appName;
+      fillQuery(`list namespaces for ${mappedAppName}`);
       await sendQuery();
     }
 
@@ -1220,8 +1231,8 @@
         cachedClusterEntries = Array.isArray(entries) ? entries : [];
         const byCluster = new Map();
         const filteredEntries = selectedApp
-          ? cachedClusterEntries.filter(entry => entry.app_name === selectedApp)
-          : cachedClusterEntries;
+          ? resolveEntriesForSelection(selectedApp, cachedClusterEntries)
+          : [];
         for (const entry of filteredEntries) {
           if (!byCluster.has(entry.cluster_name)) byCluster.set(entry.cluster_name, entry);
         }
@@ -1234,6 +1245,10 @@
         }
 
         const list = document.getElementById('cluster-list');
+        if (!clusterRows.length) {
+          list.innerHTML = '<div class="namespace-empty">Select an app to load cluster config</div>';
+          return;
+        }
         list.innerHTML = clusterRows.map(e => {
           const active = selectedCluster === e.cluster_name ? ' active' : '';
           const clusterNameEsc = (e.cluster_name || '').replace(/'/g, "\\'");
@@ -1278,7 +1293,7 @@
       // Open cluster-specific details by querying for the first app mapped to this cluster.
       const mapped = cachedClusterEntries.find(e => e.cluster_name === clusterName);
       if (chatMode === 'k8-autofix') {
-        if (mapped?.app_name) {
+        if (mapped?.app_name && !isGroupedAppSelection(selectedApp)) {
           selectedApp = mapped.app_name;
           localStorage.setItem('k8sai_selected_app', selectedApp);
           renderApps();
@@ -1297,12 +1312,77 @@
         return;
       }
       if (mapped?.app_name) {
-        selectedApp = mapped.app_name;
-        localStorage.setItem('k8sai_selected_app', selectedApp);
-        renderApps();
-        fillQuery(`list namespaces for ${mapped.app_name}`);
+        const appForQuery = mapped.app_name;
+        if (!isGroupedAppSelection(selectedApp)) {
+          selectedApp = mapped.app_name;
+          localStorage.setItem('k8sai_selected_app', selectedApp);
+          renderApps();
+        }
+        fillQuery(`list namespaces for ${appForQuery}`);
         await sendQuery();
       }
+    }
+
+    function isGroupedAppSelection(selection) {
+      const normalized = String(selection || '').trim().toLowerCase();
+      return normalized === 'eks'
+        || normalized === 'aks'
+        || normalized === 'gke'
+        || normalized === 'sandbox'
+        || normalized === 'on-prem rancher'
+        || normalized === 'on-prem';
+    }
+
+    function getAdminAppGroups(entries) {
+      const values = Array.isArray(entries) ? entries : [];
+      const groups = [];
+
+      if (values.some(entry => String(entry?.app_name || '').toLowerCase() === 'sandbox')) {
+        groups.push('sandbox');
+      }
+      if (values.some(entry => {
+        const provider = String(entry?.cloud_provider || '').toLowerCase();
+        const appName = String(entry?.app_name || '').toLowerCase();
+        return provider === 'eks' || appName.includes('eks');
+      })) {
+        groups.push('EKS');
+      }
+      if (values.some(entry => String(entry?.cloud_provider || '').toLowerCase() === 'aks')) {
+        groups.push('AKS');
+      }
+      if (values.some(entry => String(entry?.cloud_provider || '').toLowerCase() === 'gke')) {
+        groups.push('GKE');
+      }
+      if (values.some(entry => String(entry?.cloud_provider || '').toLowerCase() === 'rancher' && String(entry?.region || '').toLowerCase() === 'on-prem')) {
+        groups.push('on-prem Rancher');
+      }
+
+      return groups;
+    }
+
+    function resolveEntriesForSelection(appSelection, entries) {
+      const values = Array.isArray(entries) ? entries : [];
+      const key = String(appSelection || '').trim().toLowerCase();
+      if (!key) return values;
+
+      if (key === 'sandbox') {
+        return values.filter(entry => String(entry?.app_name || '').toLowerCase() === 'sandbox');
+      }
+      if (key === 'on-prem rancher' || key === 'on-prem') {
+        return values.filter(entry => String(entry?.cloud_provider || '').toLowerCase() === 'rancher' && String(entry?.region || '').toLowerCase() === 'on-prem');
+      }
+      if (key === 'eks') {
+        return values.filter(entry => {
+          const provider = String(entry?.cloud_provider || '').toLowerCase();
+          const appName = String(entry?.app_name || '').toLowerCase();
+          return provider === 'eks' || appName.includes('eks');
+        });
+      }
+      if (key === 'aks' || key === 'gke') {
+        return values.filter(entry => String(entry?.cloud_provider || '').toLowerCase() === key);
+      }
+
+      return values.filter(entry => entry?.app_name === appSelection);
     }
 
     async function loadSuggestions() {
@@ -1328,11 +1408,12 @@
         const source = Array.isArray(data.suggestions) ? data.suggestions : [];
         const menuCmd = 'main menu';
         const withoutMenu = source.filter(s => (s || '').toLowerCase() !== menuCmd);
-        const visible = [menuCmd, ...withoutMenu].slice(0, 6);
+        const visible = [menuCmd, ...withoutMenu];
         row.innerHTML = visible.map(s => {
           const lower = (s || '').toLowerCase();
           const cls = lower === menuCmd ? 'sug-btn sug-main' : 'sug-btn';
-          return `<button class="${cls}" onclick="fillQuery('${s}')">${s}</button>`;
+          const encoded = encodeURIComponent(String(s || ''));
+          return `<button class="${cls}" onclick="selectSuggestion(decodeURIComponent('${encoded}'))">${s}</button>`;
         }).join('');
       } catch { }
     }
@@ -1511,6 +1592,14 @@
     }
 
     async function loadNamespaces() {
+      // Do not load namespaces until the user has selected an app or cluster.
+      if (!selectedApp && !selectedCluster) {
+        cachedNamespaces = [];
+        selectedNamespace = null;
+        autofixSelectedNamespace = null;
+        renderNamespaces();
+        return;
+      }
       try {
         const params = [];
         if (chatSessionId) params.push(`session_id=${encodeURIComponent(chatSessionId)}`);
@@ -1544,7 +1633,10 @@
       if (toggleBtn) toggleBtn.textContent = namespacesExpanded ? '-' : '+';
 
       if (!namespaces.length) {
-        list.innerHTML = '<div class="namespace-empty">No matching namespaces</div>';
+        const msg = (!selectedApp && !selectedCluster)
+          ? 'Select an app to load namespaces'
+          : 'No matching namespaces';
+        list.innerHTML = `<div class="namespace-empty">${msg}</div>`;
         return;
       }
 
@@ -2197,6 +2289,11 @@
     function fillQuery(text) {
       document.getElementById('chat-input').value = text;
       document.getElementById('chat-input').focus();
+    }
+
+    async function selectSuggestion(text) {
+      fillQuery(text);
+      await sendQuery();
     }
 
     document.addEventListener('DOMContentLoaded', () => {

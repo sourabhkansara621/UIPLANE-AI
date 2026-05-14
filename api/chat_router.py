@@ -230,6 +230,7 @@ def get_suggestions(
     selected_app = context.get("app_name")
     selected_namespace = context.get("namespace")
     selected_pod = context.get("pod_name")
+    last_intent = context.get("last_intent")
     pending_mutation = context.get("pending_mutation")
     mode = (chat_mode or "k8-info").strip().lower()
     if mode not in {"k8-info", "k8-agent", "k8-autofix"}:
@@ -251,10 +252,46 @@ def get_suggestions(
         return ns_row[0] if ns_row else "default"
 
     suggestions = []
-    for app in apps_sample:
-        ns = selected_namespace if selected_namespace and selected_app == app else _default_namespace_for_app(app)
-        suggestions.extend([
-            f"List namespaces for {app}",
+
+    def _menu_aligned_suggestions() -> list[str]:
+        if mode in {"k8-agent", "k8-autofix"}:
+            commands = [
+                "show all deployments",
+                "show all services",
+                "show all secrets",
+                "show quota",
+                "show all ingresses",
+            ]
+        else:
+            commands = [
+            "show all pods",
+            "show all deployments",
+            "show all services",
+            "show all secrets",
+            "show quota",
+            "get hpa",
+            "show all ingresses",
+            "show node status",
+            ]
+
+        intent_to_cmd = {
+            "pods": "show all pods",
+            "deployments": "show all deployments",
+            "deployment_manifest": "show all deployments",
+            "services": "show all services",
+            "secrets": "show all secrets",
+            "quota": "show quota",
+            "hpa": "get hpa",
+            "ingress": "show all ingresses",
+            "nodes": "show node status",
+        }
+        preferred = intent_to_cmd.get(str(last_intent or "").strip().lower())
+        if preferred and preferred in commands:
+            commands = [preferred] + [c for c in commands if c != preferred]
+        return commands
+
+    def _contextual_suggestions(app: str, ns: str) -> list[str]:
+        cmds = [
             f"Show all pods in namespace {ns} for {app}",
             f"Show all deployments in namespace {ns} for {app}",
             f"Show deployment file in namespace {ns} for {app}",
@@ -265,10 +302,9 @@ def get_suggestions(
             f"Show all ingresses in namespace {ns} for {app}",
             f"Show node status for {app}",
             f"Are there any pod restarts in namespace {ns} for {app}?",
-        ])
-
+        ]
         if mode in {"k8-agent", "k8-autofix"}:
-            suggestions.extend([
+            cmds.extend([
                 f"Scale deployment <name> to 2 in namespace {ns} for {app}",
                 f"Update deployment <name> image <image:tag> in namespace {ns} for {app}",
                 f"Update service <name> type LoadBalancer in namespace {ns} for {app}",
@@ -276,24 +312,45 @@ def get_suggestions(
                 f"Update secret <name> key <KEY> value <VALUE> in namespace {ns} for {app}",
                 f"Update resourcequota <name> cpu 4 memory 8Gi pods 40 in namespace {ns} for {app}",
             ])
+        return cmds
 
-    if selected_pod:
-        suggestions.insert(0, "describe")
-        suggestions.insert(1, f"describe {selected_pod}")
-        suggestions.insert(2, "log")
-        suggestions.insert(3, f"log {selected_pod}")
-        suggestions.insert(4, f"log {selected_pod} 200 lines")
+    # Suggestion strategy:
+    # - app + namespace selected: show compact menu-aligned commands for current context.
+    # - app selected only: show contextual commands for current app.
+    # - nothing selected yet: show only high-level discovery/menu actions (no cross-app spam).
+    if selected_app and selected_namespace:
+        suggestions.extend([
+            *_menu_aligned_suggestions(),
+        ])
+    elif selected_app:
+        ns = _default_namespace_for_app(selected_app)
+        suggestions.extend([
+            *_contextual_suggestions(selected_app, ns),
+        ])
+    else:
+        suggestions.extend([
+            "main menu",
+        ])
 
     if pending_mutation:
         suggestions.insert(0, "confirm apply")
         suggestions.insert(1, "cancel apply")
 
-    suggestions.append("What applications do I have access to?")
-    suggestions.append("Show me all clusters in the registry")
-    suggestions.append("main menu")
+    if selected_app:
+        suggestions.append("main menu")
+
+    # Keep ordering stable but remove duplicates so UI can render all chips cleanly.
+    deduped_suggestions = []
+    seen = set()
+    for s in suggestions:
+        key = str(s or "").strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped_suggestions.append(s)
 
     return {
-        "suggestions": suggestions[:12],
+        "suggestions": deduped_suggestions,
         "allowed_apps": allowed_apps,
         "user": current_user.username,
         "selected_namespace": selected_namespace,

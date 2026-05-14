@@ -303,6 +303,30 @@ class ReadAgent:
             return "copilot"
         return self._ai_provider
 
+    def _build_now_ask_menu(self, chat_mode: str) -> str:
+        """Build a short generic 'Now ask' menu (context shown above separately)."""
+        if chat_mode in {"k8-agent", "k8-autofix"}:
+            commands = [
+                "show all deployments",
+                "show all services",
+                "show all secrets",
+                "show quota",
+                "show all ingresses",
+            ]
+        else:
+            commands = [
+                "show all pods",
+                "show all deployments",
+                "show all services",
+                "show all secrets",
+                "show quota",
+                "get hpa",
+                "show all ingresses",
+                "show node status",
+            ]
+
+        return "Now ask:\n" + "\n".join(f"  - {cmd}" for cmd in commands)
+
     # -- Main entrypoint -------------------------------------------------------
 
     def process_query(
@@ -322,6 +346,8 @@ class ReadAgent:
         context = SESSION_CONTEXT.setdefault(session_id, {})
         intent = self._parse_intent(query)
         intent.raw_query = query
+        # Keep latest intent for suggestion ranking on subsequent turns.
+        context["last_intent"] = intent.intent_type
         mutation_confirmed = False
 
         if not intent.app_name and context.get("app_name"):
@@ -464,28 +490,16 @@ class ReadAgent:
         if intent.intent_type == "namespace_select" and intent.namespace:
             if not intent.app_name:
                 intent.app_name = self._infer_app_from_namespace(intent.namespace, user, db) or context.get("app_name")
+            previous_ns = context.get("namespace")
+            previous_app = context.get("app_name")
             context["namespace"] = intent.namespace
             if intent.app_name:
                 context["app_name"] = intent.app_name
+            # Namespace/app switch invalidates previously selected pod context.
+            if previous_ns != intent.namespace or (intent.app_name and previous_app != intent.app_name):
+                context.pop("pod_name", None)
             app_hint = intent.app_name or "your app"
-            base_menu = (
-                "Now ask:\n"
-                "  - show all deployments\n"
-                "  - show all services\n"
-                "  - show all secrets\n"
-                "  - show quota\n"
-                "  - show all ingresses"
-            ) if chat_mode in {"k8-agent", "k8-autofix"} else (
-                "Now ask:\n"
-                "  - show all pods\n"
-                "  - show all deployments\n"
-                "  - show all services\n"
-                "  - show all secrets\n"
-                "  - show quota\n"
-                "  - get hpa\n"
-                "  - show all ingresses\n"
-                "  - show node status"
-            )
+            base_menu = self._build_now_ask_menu(chat_mode)
             return ChatQueryResponse(
                 answer=(
                     f"Selected namespace: {intent.namespace}\n"
@@ -504,24 +518,7 @@ class ReadAgent:
                 context["app_name"] = app
             app_hint = app or "your app"
             ns_hint = ns or "(not selected)"
-            base_menu = (
-                "Now ask:\n"
-                "  - show all deployments\n"
-                "  - show all services\n"
-                "  - show all secrets\n"
-                "  - show quota\n"
-                "  - show all ingresses"
-            ) if chat_mode in {"k8-agent", "k8-autofix"} else (
-                "Now ask:\n"
-                "  - show all pods\n"
-                "  - show all deployments\n"
-                "  - show all services\n"
-                "  - show all secrets\n"
-                "  - show quota\n"
-                "  - get hpa\n"
-                "  - show all ingresses\n"
-                "  - show node status"
-            )
+            base_menu = self._build_now_ask_menu(chat_mode)
             return ChatQueryResponse(
                 answer=(
                     "Main menu\n"
@@ -601,9 +598,15 @@ class ReadAgent:
             )
 
         if intent.app_name:
+            previous_app = context.get("app_name")
             context["app_name"] = intent.app_name
+            if previous_app and previous_app != intent.app_name:
+                context.pop("pod_name", None)
         if intent.namespace:
+            previous_ns = context.get("namespace")
             context["namespace"] = intent.namespace
+            if previous_ns and previous_ns != intent.namespace:
+                context.pop("pod_name", None)
 
         # Namespace listing flow (no app required)
         if intent.intent_type == "namespaces" and not intent.app_name:
@@ -2325,7 +2328,7 @@ class ReadAgent:
                 if pending:
                     lines.append(f"\n  ? {len(pending)} pod(s) Pending - may be waiting for node resources.")
                 if pods:
-                    lines.append("\n  Tip: select a pod first using 'select pod <pod-name>' to enable quick 'describe' and 'logs'.")
+                    lines.append("\n  Tip: run 'select pod-name' to see all operations are available for that pod.")
 
             # POD DESCRIBE
             if "pod_description" in data:
