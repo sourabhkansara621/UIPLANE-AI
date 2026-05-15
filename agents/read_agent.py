@@ -490,6 +490,8 @@ class ReadAgent:
         if intent.intent_type == "namespace_select" and intent.namespace:
             if not intent.app_name:
                 intent.app_name = self._infer_app_from_namespace(intent.namespace, user, db) or context.get("app_name")
+            # Normalize app_name casing before storing in context so it matches DB values
+            intent.app_name = self._normalize_app_name(intent.app_name, user, db)
             previous_ns = context.get("namespace")
             previous_app = context.get("app_name")
             context["namespace"] = intent.namespace
@@ -644,12 +646,28 @@ class ReadAgent:
         # Get registry entries
         registry_entries = self._get_registry_entries(intent, db)
 
+        # In strict MCP mode, never execute against disconnected DB-only entries.
+        live_clusters = set(self.gateway.list_clusters())
+        if settings.mcp_enabled and settings.mcp_strict_mode and registry_entries:
+            registry_entries = [reg for reg in registry_entries if reg.cluster_name in live_clusters]
+
+            # Hard fail when app is provided but no connected target remains.
+            if intent.app_name and not registry_entries:
+                return ChatQueryResponse(
+                    answer=(
+                        f"No connected cluster found for app '{intent.app_name}'. "
+                        "MCP strict mode is enabled, so disconnected registry entries are blocked. "
+                        "Please provide a valid MCP token and reconnect the cluster."
+                    ),
+                    session_id=session_id,
+                )
+
         if intent.intent_type in {"describe_pod", "logs"} and registry_entries:
             resolved_pod = None
             resolved_entries: List[ClusterRegistry] = []
             candidate_names: List[str] = []
             for reg in registry_entries:
-                if reg.cluster_name not in self.gateway.list_clusters():
+                if reg.cluster_name not in live_clusters:
                     continue
                 pods = list_pods(reg.cluster_name, intent.namespace or reg.namespace, self.gateway)
                 pod_names = [p.name for p in pods]
@@ -678,7 +696,7 @@ class ReadAgent:
         if intent.intent_type == "pod_select" and registry_entries:
             selected_pod = None
             for reg in registry_entries:
-                if reg.cluster_name not in self.gateway.list_clusters():
+                if reg.cluster_name not in live_clusters:
                     continue
                 pods = list_pods(reg.cluster_name, intent.namespace or reg.namespace, self.gateway)
                 pod_names = [p.name for p in pods]
@@ -784,7 +802,7 @@ class ReadAgent:
                 )
 
             for reg in registry_entries:
-                is_connected = reg.cluster_name in self.gateway.list_clusters()
+                is_connected = reg.cluster_name in live_clusters
                 if is_connected:
                     try:
                         if intent.intent_type in MUTATION_INTENTS:
@@ -2292,6 +2310,13 @@ class ReadAgent:
 
         for cluster, data in raw_data.items():
             label = cluster.replace(" (demo)", "").replace(" (mock)", "")
+
+            # Surface backend/API failures clearly (for example SSL/certificate errors)
+            # instead of returning a generic no-data summary.
+            if isinstance(data, dict) and data.get("error"):
+                lines.append(f"Error - {label}")
+                lines.append(f"  {data.get('error')}")
+                continue
 
             # WHERE
             if intent.intent_type == "where" and "cluster" in data:

@@ -7,6 +7,7 @@ from mcp.clients import (
     GKEClient,
     EKSClient,
     AKSClient,
+    RancherClient,
     DatadogObservabilityClient,
 )
 from mcp.schemas import MCPServerResponse
@@ -20,6 +21,7 @@ class MCPServer:
             GKEClient(),
             EKSClient(),
             AKSClient(),
+            RancherClient(),
             DatadogObservabilityClient(),
         ]
 
