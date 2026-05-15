@@ -27,8 +27,9 @@ import httpx
 from kubernetes import client, config as k8s_config
 from kubernetes.client import (
     CoreV1Api, AppsV1Api, AutoscalingV1Api,
-    NetworkingV1Api, ApiException,
+    NetworkingV1Api, ApiException, Configuration,
 )
+import urllib3
 from sqlalchemy.orm import Session
 
 from models.database import ClusterRegistry
@@ -84,11 +85,16 @@ class ClusterGateway:
             This should be called once during application startup.
             Call get_gateway() dependency to access the singleton instance.
         """
+        strict_mcp_mode = settings.mcp_enabled and settings.mcp_strict_mode
+
         # In-cluster mode: running inside a Kubernetes pod
-        if settings.k8s_use_in_cluster:
+        if settings.k8s_use_in_cluster and not strict_mcp_mode:
             try:
-                k8s_config.load_incluster_config()
-                api_client = client.ApiClient()
+                config = Configuration()
+                k8s_config.load_incluster_config(client_configuration=config)
+                config.verify_ssl = False
+                config.ssl_ca_cert = None
+                api_client = client.ApiClient(configuration=config)
                 self._clients["in-cluster"] = api_client
                 logger.info("Loaded in-cluster kubeconfig")
             except Exception as exc:
@@ -96,27 +102,38 @@ class ClusterGateway:
             self._loaded = True
             return
 
-        # Load from kubeconfig file paths
-        kubeconfig_paths = [
-            p.strip()
-            for p in settings.k8s_kubeconfig_paths.split(",")
-            if p.strip()
-        ]
+        if strict_mcp_mode:
+            logger.info("MCP strict mode enabled: skipping direct kubeconfig and in-cluster loading")
+        else:
+            # Load from kubeconfig file paths
+            kubeconfig_paths = [
+                p.strip()
+                for p in settings.k8s_kubeconfig_paths.split(",")
+                if p.strip()
+            ]
 
-        for kubeconfig_path in kubeconfig_paths:
-            path = Path(kubeconfig_path).expanduser()
-            if not path.exists():
-                logger.warning("Kubeconfig not found: %s", path)
-                continue
-            try:
-                self._load_contexts_from_file(str(path))
-            except Exception as exc:
-                logger.error("Error loading kubeconfig %s: %s", path, exc)
+            for kubeconfig_path in kubeconfig_paths:
+                path = Path(kubeconfig_path).expanduser()
+                if not path.exists():
+                    logger.warning("Kubeconfig not found: %s", path)
+                    continue
+                try:
+                    self._load_contexts_from_file(str(path))
+                except Exception as exc:
+                    logger.error("Error loading kubeconfig %s: %s", path, exc)
 
         # Load clusters from MCP endpoints if enabled
         if settings.mcp_enabled:
-            self._load_clusters_from_mcp_local_kubeconfigs()
+            if not strict_mcp_mode:
+                self._load_clusters_from_mcp_local_kubeconfigs()
+            self._load_clusters_from_mcp_rancher_api()
             self._load_clusters_from_mcp_endpoints()
+
+            if strict_mcp_mode and not self._clients:
+                logger.warning(
+                    "MCP strict mode is enabled but no clusters were loaded. "
+                    "Check MCP_RANCHER_API_URL/MCP_RANCHER_API_TOKEN or MCP_CLUSTER_ENDPOINTS."
+                )
 
         self._loaded = True
         logger.info("Gateway ready — %d cluster(s) loaded", len(self._clients))
@@ -128,6 +145,7 @@ class ClusterGateway:
             settings.mcp_gke_kubeconfig_paths,
             settings.mcp_eks_kubeconfig_paths,
             settings.mcp_aks_kubeconfig_paths,
+            settings.mcp_rancher_kubeconfig_paths,
         ):
             provider_paths.extend([p.strip() for p in raw_paths.split(",") if p.strip()])
 
@@ -165,8 +183,52 @@ class ClusterGateway:
         for ctx in contexts:
             cluster_name = ctx["name"]
             k8s_config.load_kube_config(config_file=kubeconfig_file, context=cluster_name)
-            self._clients[cluster_name] = client.ApiClient()
+            config = Configuration()
+            k8s_config.load_kube_config(config_file=kubeconfig_file, context=cluster_name, client_configuration=config)
+            # Disable SSL verification for self-signed certificates in internal clusters
+            config.verify_ssl = False
+            config.ssl_ca_cert = None
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            api_client = client.ApiClient(configuration=config)
+            self._clients[cluster_name] = api_client
             logger.info("Loaded cluster context: %s", cluster_name)
+
+    def _load_clusters_from_mcp_rancher_api(self) -> None:
+        """Load Rancher clusters discovered via the Rancher v3 API (inline kubeconfigs)."""
+        try:
+            from mcp.clients.rancher_client import RancherClient
+            rancher = RancherClient()
+            result = rancher.collect()
+
+            if not result.clusters and not result.errors:
+                logger.info("Rancher MCP API is not configured")
+                return
+
+            if result.errors:
+                for err in result.errors:
+                    logger.warning("RancherClient error: %s", err)
+
+            for cluster in result.clusters:
+                if cluster.kubeconfig:
+                    temp_file = self._write_temp_kubeconfig(cluster.kubeconfig)
+                    if temp_file:
+                        self._mcp_temp_files.append(temp_file)
+                        try:
+                            self._load_contexts_from_file(temp_file)
+                            logger.info("Loaded Rancher API cluster: %s", cluster.context)
+                        except Exception as exc:
+                            logger.error("Failed loading Rancher kubeconfig for %s: %s", cluster.context, exc)
+                elif cluster.kubeconfig_path:
+                    path = Path(cluster.kubeconfig_path).expanduser()
+                    if path.exists():
+                        try:
+                            self._load_contexts_from_file(str(path))
+                        except Exception as exc:
+                            logger.error("Failed loading Rancher kubeconfig path %s: %s", path, exc)
+                    else:
+                        logger.warning("Rancher kubeconfig path not found: %s", path)
+        except Exception as exc:
+            logger.error("Failed loading clusters from Rancher API: %s", exc)
 
     def _load_clusters_from_mcp_endpoints(self) -> None:
         endpoints = [e.strip() for e in settings.mcp_cluster_endpoints.split(",") if e.strip()]
@@ -202,8 +264,12 @@ class ClusterGateway:
                                 self._mcp_temp_files.append(temp_file)
                                 if context_name:
                                     try:
-                                        k8s_config.load_kube_config(config_file=temp_file, context=context_name)
-                                        self._clients[context_name] = client.ApiClient()
+                                        config = Configuration()
+                                        k8s_config.load_kube_config(config_file=temp_file, context=context_name, client_configuration=config)
+                                        config.verify_ssl = False
+                                        config.ssl_ca_cert = None
+                                        api_client = client.ApiClient(configuration=config)
+                                        self._clients[context_name] = api_client
                                         loaded += 1
                                         logger.info("Loaded MCP cluster context: %s", context_name)
                                     except Exception as exc:

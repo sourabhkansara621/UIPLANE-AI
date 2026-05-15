@@ -23,6 +23,7 @@ from agents.read_agent import ReadAgent, SESSION_CONTEXT
 from gateway.cluster_gateway import ClusterGateway, get_gateway
 from capabilities.k8s_reader import list_namespaces, get_deployment_manifest
 from capabilities.k8s_writer import update_deployment
+from config.settings import get_settings
 
 router = APIRouter(prefix="/api/chat", tags=["AI Chat"])
 
@@ -205,21 +206,39 @@ def get_suggestions(
     chat_mode: Optional[str] = "k8-info",
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
+    gateway: ClusterGateway = Depends(get_gateway),
 ):
     """
     Return contextual query suggestions based on the user's allowed apps.
     Helps new users discover what they can ask.
     """
     allowed_apps = get_user_allowed_apps(current_user, db)
+    settings = get_settings()
+    strict_mcp_mode = settings.mcp_enabled and settings.mcp_strict_mode
+    connected_clusters = set(gateway.list_clusters())
+
+    live_apps = {
+        row[0]
+        for row in db.query(ClusterRegistry.app_name)
+        .filter(
+            ClusterRegistry.is_active == True,
+            ClusterRegistry.cluster_name.in_(connected_clusters) if connected_clusters else False,
+        )
+        .distinct()
+        .all()
+    } if strict_mcp_mode else set()
+
+    if strict_mcp_mode and allowed_apps != ["*"]:
+        allowed_apps = [a for a in allowed_apps if a in live_apps]
 
     if not allowed_apps or allowed_apps == ["*"]:
-        apps_sample = [
-            row[0]
-            for row in db.query(ClusterRegistry.app_name)
-            .filter(ClusterRegistry.is_active == True)
-            .distinct()
-            .all()
-        ]
+        q = db.query(ClusterRegistry.app_name).filter(ClusterRegistry.is_active == True)
+        if strict_mcp_mode:
+            if connected_clusters:
+                q = q.filter(ClusterRegistry.cluster_name.in_(connected_clusters))
+            else:
+                q = q.filter(False)
+        apps_sample = [row[0] for row in q.distinct().all()]
     else:
         apps_sample = allowed_apps[:2]
 
@@ -230,6 +249,22 @@ def get_suggestions(
     selected_app = context.get("app_name")
     selected_namespace = context.get("namespace")
     selected_pod = context.get("pod_name")
+    # Case-insensitive match to handle lowercase app_name stored in session context
+    live_apps_lower = {a.lower(): a for a in live_apps}
+    if selected_app and selected_app not in live_apps and selected_app.lower() in live_apps_lower:
+        # Fix the casing in context and selected_app to match DB
+        selected_app = live_apps_lower[selected_app.lower()]
+        if session_id and session_id in SESSION_CONTEXT:
+            SESSION_CONTEXT[session_id]["app_name"] = selected_app
+    if strict_mcp_mode and selected_app and selected_app not in live_apps:
+        selected_app = None
+        selected_namespace = None
+        selected_pod = None
+        if session_id and session_id in SESSION_CONTEXT:
+            SESSION_CONTEXT[session_id].pop("app_name", None)
+            SESSION_CONTEXT[session_id].pop("namespace", None)
+            SESSION_CONTEXT[session_id].pop("pod_name", None)
+
     last_intent = context.get("last_intent")
     pending_mutation = context.get("pending_mutation")
     mode = (chat_mode or "k8-info").strip().lower()
@@ -363,6 +398,7 @@ def get_suggestions(
 def get_namespaces(
     session_id: Optional[str] = None,
     cluster_name: Optional[str] = None,
+    selected_app: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
     gateway: ClusterGateway = Depends(get_gateway),
@@ -370,7 +406,7 @@ def get_namespaces(
     """Return namespaces for sidebar picker based on allowed apps and active session context."""
     allowed_apps = get_user_allowed_apps(current_user, db)
     context = SESSION_CONTEXT.get(session_id or "", {}) if session_id else {}
-    selected_app = context.get("app_name")
+    selected_app = selected_app or context.get("app_name")
     selected_namespace = context.get("namespace")
 
     q = db.query(ClusterRegistry.app_name, ClusterRegistry.namespace, ClusterRegistry.cluster_name).filter(
@@ -389,19 +425,44 @@ def get_namespaces(
         q = q.filter(ClusterRegistry.app_name.in_(allowed_apps))
 
     rows = q.distinct().all()
-    # If a specific cluster is requested from UI selection, do not constrain by
-    # previously selected app in session context (it may belong to another cluster).
-    if selected_app and not cluster_name:
+    # If an app is selected, always constrain rows to that app to avoid
+    # cross-app namespace leakage when a different cluster is selected.
+    if selected_app:
         rows = [r for r in rows if r[0] == selected_app]
 
-    # Start with DB namespaces as fallback.
-    namespaces = {ns for _, ns, _ in rows}
+    connected_clusters = set(gateway.list_clusters())
+
+    settings = get_settings()
+    strict_mcp_mode = settings.mcp_enabled and settings.mcp_strict_mode
+
+    # In strict MCP mode, ignore disconnected DB rows entirely so namespaces
+    # never appear unless the cluster is live through MCP/gateway.
+    effective_rows = rows
+    if strict_mcp_mode:
+        effective_rows = [r for r in rows if r[2] in connected_clusters]
+
+    # In strict mode, if a specific app is selected but no live mapping exists,
+    # return empty namespaces instead of falling back to other apps/clusters.
+    if strict_mcp_mode and selected_app and not effective_rows:
+        return {
+            "namespaces": [],
+            "selected_namespace": None,
+            "selected_app": selected_app,
+            "selected_cluster": cluster_name,
+            "strict_blocked": True,
+            "message": "No live MCP cluster connected for selected app.",
+        }
+
+    # Start with DB namespaces as fallback for non-strict mode only.
+    # Strict mode must rely on live cluster reads.
+    namespaces = set()
+    if not strict_mcp_mode:
+        namespaces = {ns for _, ns, _ in effective_rows}
 
     # Enrich with live namespaces from connected clusters.
     # Important: query each cluster only once to avoid repeated K8s API calls
     # when many app/namespace rows point to the same cluster.
-    connected_clusters = set(gateway.list_clusters())
-    clusters_to_query = {reg_cluster for _, _, reg_cluster in rows if reg_cluster in connected_clusters}
+    clusters_to_query = {reg_cluster for _, _, reg_cluster in effective_rows if reg_cluster in connected_clusters}
     for reg_cluster in clusters_to_query:
         try:
             live_namespaces = list_namespaces(reg_cluster, gateway)
@@ -417,6 +478,7 @@ def get_namespaces(
         "selected_namespace": selected_namespace,
         "selected_app": selected_app,
         "selected_cluster": cluster_name,
+        "strict_blocked": False,
     }
 
 

@@ -48,7 +48,16 @@ def list_cluster_entries(
         allowed_apps = get_user_allowed_apps(current_user, db)
         q = q.filter(ClusterRegistry.app_name.in_(allowed_apps))
 
-    return q.order_by(ClusterRegistry.app_name, ClusterRegistry.environment).all()
+    entries = q.order_by(ClusterRegistry.app_name, ClusterRegistry.environment).all()
+
+    # Only surface entries for clusters that are currently connected in the
+    # gateway (kubeconfig or MCP discovered). This keeps the registry-backed
+    # UI aligned with live MCP/gateway connectivity.
+    connected_clusters = set(gateway.list_clusters())
+    if not connected_clusters:
+        return []
+
+    return [e for e in entries if e.cluster_name in connected_clusters]
 
 
 # ── Register new entry ────────────────────────────────────────────────────────

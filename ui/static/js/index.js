@@ -4,6 +4,7 @@
     let currentUser = null;
     let namespacesExpanded = (localStorage.getItem('k8sai_namespaces_expanded') ?? 'true') === 'true';
     let namespaceFilter = '';
+    let namespaceStatusMessage = '';
     let cachedNamespaces = [];
     let selectedNamespace = localStorage.getItem('k8sai_selected_namespace') || null;
     let selectedApp = localStorage.getItem('k8sai_selected_app') || null;
@@ -1141,9 +1142,24 @@
 
     function renderApps() {
       const list = document.getElementById('app-list');
+      const entries = Array.isArray(cachedClusterEntries) ? cachedClusterEntries : [];
+      const liveAppNames = Array.from(new Set(entries.map(e => e?.app_name).filter(Boolean)));
+      const liveAppSet = new Set(liveAppNames);
       const apps = currentUser.allowed_apps.includes('*')
-        ? getAdminAppGroups(cachedClusterEntries || [])
+        ? getAdminAppGroups(entries)
         : currentUser.allowed_apps;
+
+      // Clear stale selected app only when it is not in user's allowed list.
+      if (selectedApp && !currentUser.allowed_apps.includes('*') && !currentUser.allowed_apps.includes(selectedApp)) {
+        selectedApp = null;
+        localStorage.removeItem('k8sai_selected_app');
+      }
+
+      if (!apps.length) {
+        list.innerHTML = '<div class="namespace-empty">No live apps connected</div>';
+        return;
+      }
+
       list.innerHTML = apps.map(a => {
         const active = selectedApp === a ? ' active' : '';
         const appEsc = (a || '').replace(/'/g, "\\'");
@@ -1192,6 +1208,13 @@
         return;
       }
 
+      // Switching app groups should drop stale namespace/cluster state.
+      selectedNamespace = null;
+      autofixSelectedNamespace = null;
+      localStorage.removeItem('k8sai_selected_namespace');
+      selectedCluster = null;
+      localStorage.removeItem('k8sai_selected_cluster');
+
       selectedApp = appName;
       localStorage.setItem('k8sai_selected_app', appName);
 
@@ -1200,6 +1223,8 @@
       if (mapped?.cluster_name) {
         selectedCluster = mapped.cluster_name;
         localStorage.setItem('k8sai_selected_cluster', selectedCluster);
+        await loadClusters();
+      } else {
         await loadClusters();
       }
 
@@ -1217,6 +1242,13 @@
         refreshAutofixDatadogIssues();
         renderAutofixSeverityButtons();
         renderAutofixHistoryPanel();
+        return;
+      }
+      // For cloud-provider group selections (EKS/AKS/GKE/etc) just load clusters
+      // and let the user pick a specific cluster — don't auto-send a namespace query.
+      if (isGroupedAppSelection(appName)) {
+        await loadNamespaces();
+        await loadSuggestions();
         return;
       }
       const mappedAppName = resolveEntriesForSelection(appName, cachedClusterEntries || [])[0]?.app_name || appName;
@@ -1335,29 +1367,38 @@
 
     function getAdminAppGroups(entries) {
       const values = Array.isArray(entries) ? entries : [];
-      const groups = [];
 
-      if (values.some(entry => String(entry?.app_name || '').toLowerCase() === 'sandbox')) {
-        groups.push('sandbox');
-      }
-      if (values.some(entry => {
+      // Always show the top-level platform groups in the requested order.
+      const groups = ['sandbox', 'EKS', 'AKS', 'GKE', 'on-prem Rancher'];
+
+      // cloud_provider values already covered by a named group - skip those app_names
+      const coveredProviders = new Set(['eks', 'aks', 'gke', 'rancher']);
+
+      // Include any additional app names that may exist in the registry
+      // so admins can still access non-standard app mappings.
+      const known = new Set(groups.map(g => g.toLowerCase()));
+      const extras = [];
+      // Build a map: app_name -> set of cloud_providers used by that app
+      const appProviders = {};
+      for (const entry of values) {
+        const name = String(entry?.app_name || '').trim();
+        if (!name) continue;
         const provider = String(entry?.cloud_provider || '').toLowerCase();
-        const appName = String(entry?.app_name || '').toLowerCase();
-        return provider === 'eks' || appName.includes('eks');
-      })) {
-        groups.push('EKS');
+        if (!appProviders[name]) appProviders[name] = new Set();
+        appProviders[name].add(provider);
       }
-      if (values.some(entry => String(entry?.cloud_provider || '').toLowerCase() === 'aks')) {
-        groups.push('AKS');
-      }
-      if (values.some(entry => String(entry?.cloud_provider || '').toLowerCase() === 'gke')) {
-        groups.push('GKE');
-      }
-      if (values.some(entry => String(entry?.cloud_provider || '').toLowerCase() === 'rancher' && String(entry?.region || '').toLowerCase() === 'on-prem')) {
-        groups.push('on-prem Rancher');
+      for (const entry of values) {
+        const name = String(entry?.app_name || '').trim();
+        if (!name) continue;
+        if (known.has(name.toLowerCase())) continue;
+        // Skip if all providers for this app are covered by a named group
+        const providers = appProviders[name] || new Set();
+        if ([...providers].every(p => coveredProviders.has(p))) continue;
+        known.add(name.toLowerCase());
+        extras.push(name);
       }
 
-      return groups;
+      return [...groups, ...extras];
     }
 
     function resolveEntriesForSelection(appSelection, entries) {
@@ -1385,6 +1426,25 @@
       return values.filter(entry => entry?.app_name === appSelection);
     }
 
+    function resolveSelectedAppNameForQuery() {
+      const rawSelection = String(selectedApp || '').trim();
+      if (!rawSelection) return '';
+
+      if (!isGroupedAppSelection(rawSelection)) {
+        return rawSelection;
+      }
+
+      const entries = resolveEntriesForSelection(rawSelection, cachedClusterEntries || []);
+      if (!entries.length) return '';
+
+      if (selectedCluster) {
+        const clusterMatch = entries.find(e => e?.cluster_name === selectedCluster && e?.app_name);
+        if (clusterMatch?.app_name) return String(clusterMatch.app_name).trim();
+      }
+
+      return String(entries[0]?.app_name || '').trim();
+    }
+
     async function loadSuggestions() {
       try {
         const params = [];
@@ -1400,9 +1460,14 @@
         if (nsBadge) nsBadge.textContent = `Active Namespace: ${nsText}${appText}${clusterText}`;
 
         if (data.selected_app) {
-          selectedApp = data.selected_app;
-          localStorage.setItem('k8sai_selected_app', selectedApp);
-          renderApps();
+          // Keep user's grouped chip selection (EKS/AKS/GKE/sandbox) stable.
+          // Backend returns concrete app context for execution, but UI grouping
+          // should not be replaced during cross-group navigation.
+          if (!isGroupedAppSelection(selectedApp)) {
+            selectedApp = data.selected_app;
+            localStorage.setItem('k8sai_selected_app', selectedApp);
+            renderApps();
+          }
         }
         const row = document.getElementById('suggestions');
         const source = Array.isArray(data.suggestions) ? data.suggestions : [];
@@ -1415,7 +1480,13 @@
           const encoded = encodeURIComponent(String(s || ''));
           return `<button class="${cls}" onclick="selectSuggestion(decodeURIComponent('${encoded}'))">${s}</button>`;
         }).join('');
-      } catch { }
+      } catch {
+        // Prevent stale namespace list from previous successful loads.
+        cachedNamespaces = [];
+        selectedNamespace = null;
+        autofixSelectedNamespace = null;
+        renderNamespaces();
+      }
     }
 
     async function openGeneralQuestion() {
@@ -1597,6 +1668,7 @@
         cachedNamespaces = [];
         selectedNamespace = null;
         autofixSelectedNamespace = null;
+        namespaceStatusMessage = '';
         renderNamespaces();
         return;
       }
@@ -1604,16 +1676,30 @@
         const params = [];
         if (chatSessionId) params.push(`session_id=${encodeURIComponent(chatSessionId)}`);
         if (selectedCluster) params.push(`cluster_name=${encodeURIComponent(selectedCluster)}`);
+        const resolvedApp = resolveSelectedAppNameForQuery();
+        if (resolvedApp) {
+          params.push(`selected_app=${encodeURIComponent(resolvedApp)}`);
+        }
         const qp = params.length ? `?${params.join('&')}` : '';
         const res = await fetch(`${API}/api/chat/namespaces${qp}`, { headers: authHeaders() });
         const data = await res.json();
         cachedNamespaces = data.namespaces || [];
+        namespaceStatusMessage = data.strict_blocked
+          ? (data.message || 'No live MCP cluster connected for selected app')
+          : '';
         const desiredNs = autofixSelectedNamespace || selectedNamespace || data.selected_namespace || null;
         selectedNamespace = (desiredNs && cachedNamespaces.includes(desiredNs)) ? desiredNs : null;
         autofixSelectedNamespace = selectedNamespace;
         renderNamespaces();
         refreshAutofixDatadogIssues();
-      } catch { }
+      } catch {
+        // Prevent stale namespace list from previous successful loads.
+        cachedNamespaces = [];
+        selectedNamespace = null;
+        autofixSelectedNamespace = null;
+        namespaceStatusMessage = 'Unable to load namespaces';
+        renderNamespaces();
+      }
     }
 
     function renderNamespaces() {
@@ -1633,9 +1719,9 @@
       if (toggleBtn) toggleBtn.textContent = namespacesExpanded ? '-' : '+';
 
       if (!namespaces.length) {
-        const msg = (!selectedApp && !selectedCluster)
+        const msg = namespaceStatusMessage || ((!selectedApp && !selectedCluster)
           ? 'Select an app to load namespaces'
-          : 'No matching namespaces';
+          : 'No matching namespaces');
         list.innerHTML = `<div class="namespace-empty">${msg}</div>`;
         return;
       }
@@ -2116,7 +2202,7 @@
 
     function buildNamespaceSelectionQuery(ns) {
       const namespace = String(ns || '').trim();
-      const app = String(selectedApp || '').trim();
+      const app = resolveSelectedAppNameForQuery();
       if (!namespace) return '';
       if (app) return `namespace ${namespace} for ${app}`;
       return namespace;
