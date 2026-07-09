@@ -1,0 +1,20 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: __INGRESS_NAME__
+  namespace: __NAMESPACE__
+  labels:
+    app: __DEPLOYMENT_NAME__
+spec:
+  ingressClassName: __INGRESS_CLASS__
+  rules:
+    - host: __INGRESS_HOST__
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: __SERVICE_NAME__
+                port:
+                  number: 80

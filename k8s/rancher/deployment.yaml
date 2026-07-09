@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: __DEPLOYMENT_NAME__
+  namespace: __NAMESPACE__
+  labels:
+    app: __DEPLOYMENT_NAME__
+spec:
+  replicas: __REPLICAS__
+  selector:
+    matchLabels:
+      app: __DEPLOYMENT_NAME__
+  template:
+    metadata:
+      labels:
+        app: __DEPLOYMENT_NAME__
+    spec:
+      containers:
+        - name: app
+          image: __IMAGE__
+          imagePullPolicy: Always
+          ports:
+            - containerPort: __CONTAINER_PORT__
+          envFrom:
+            - secretRef:
+                name: uniplane-ai-env
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: __CONTAINER_PORT__
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: __CONTAINER_PORT__
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi

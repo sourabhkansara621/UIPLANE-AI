@@ -1,0 +1,172 @@
+name: Deploy To Rancher
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: GitHub environment name for this deployment
+        required: true
+        default: dev
+      namespace:
+        description: Kubernetes namespace in the Rancher-managed cluster
+        required: true
+        default: uniplane-ai
+      replicas:
+        description: Replica count for the deployment
+        required: true
+        default: "1"
+      ingress_host:
+        description: Public or internal hostname for the Rancher ingress
+        required: true
+        default: uniplane-ai.example.internal
+      ingress_class:
+        description: Ingress class name in the target cluster
+        required: true
+        default: nginx
+  push:
+    branches:
+      - main
+      - UIPlane-dev
+    paths:
+      - ".github/workflows/deploy-rancher.yml"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "requirements.txt"
+      - "main.py"
+      - "agents/**"
+      - "api/**"
+      - "auth/**"
+      - "capabilities/**"
+      - "config/**"
+      - "gateway/**"
+      - "mcp/**"
+      - "models/**"
+      - "ui/**"
+      - "utils/**"
+      - "k8s/rancher/**"
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  KUBE_NAMESPACE: ${{ inputs.namespace || 'uniplane-ai' }}
+  DEPLOYMENT_NAME: uniplane-ai-platform
+  SERVICE_NAME: uniplane-ai-platform
+  INGRESS_NAME: uniplane-ai-platform
+  REPLICAS: ${{ inputs.replicas || '1' }}
+  INGRESS_HOST: ${{ inputs.ingress_host || 'uniplane-ai.example.internal' }}
+  INGRESS_CLASS: ${{ inputs.ingress_class || 'nginx' }}
+  CONTAINER_PORT: "8000"
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment || 'dev' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive image tags
+        id: image
+        shell: bash
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          SAFE_BRANCH="${GITHUB_REF_NAME//\//-}"
+          SAFE_BRANCH="$(echo "$SAFE_BRANCH" | tr '[:upper:]' '[:lower:]')"
+          IMAGE_REPO="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          IMAGE_URI="${REGISTRY}/${IMAGE_REPO}"
+          echo "image_uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+          echo "branch_tag=${SAFE_BRANCH}" >> "$GITHUB_OUTPUT"
+          echo "full_image=${IMAGE_URI}:${SAFE_BRANCH}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.image.outputs.full_image }}
+            ${{ steps.image.outputs.image_uri }}:${{ steps.image.outputs.branch_tag }}
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.30.0
+
+      - name: Configure kubeconfig
+        shell: bash
+        run: |
+          mkdir -p "$HOME/.kube"
+          cat > "$HOME/.kube/config" <<'EOF'
+          ${{ secrets.RANCHER_KUBECONFIG }}
+          EOF
+          chmod 600 "$HOME/.kube/config"
+          kubectl config current-context
+
+      - name: Ensure namespace exists
+        shell: bash
+        run: |
+          kubectl create namespace "$KUBE_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Sync application env secret
+        shell: bash
+        run: |
+          cat > .env.deploy <<'EOF'
+          ${{ secrets.APP_ENV_FILE }}
+          EOF
+          kubectl -n "$KUBE_NAMESPACE" create secret generic uniplane-ai-env \
+            --from-env-file=.env.deploy \
+            --dry-run=client -o yaml | kubectl apply -f -
+          rm -f .env.deploy
+
+      - name: Render Kubernetes manifests
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          replacements = {
+              "__NAMESPACE__": "${{ env.KUBE_NAMESPACE }}",
+              "__DEPLOYMENT_NAME__": "${{ env.DEPLOYMENT_NAME }}",
+              "__SERVICE_NAME__": "${{ env.SERVICE_NAME }}",
+              "__INGRESS_NAME__": "${{ env.INGRESS_NAME }}",
+              "__REPLICAS__": "${{ env.REPLICAS }}",
+              "__IMAGE__": "${{ steps.image.outputs.full_image }}",
+              "__INGRESS_HOST__": "${{ env.INGRESS_HOST }}",
+              "__INGRESS_CLASS__": "${{ env.INGRESS_CLASS }}",
+              "__CONTAINER_PORT__": "${{ env.CONTAINER_PORT }}",
+          }
+          render_dir = Path("k8s/rancher/rendered")
+          render_dir.mkdir(parents=True, exist_ok=True)
+          for template in Path("k8s/rancher").glob("*.yaml"):
+              text = template.read_text(encoding="utf-8")
+              for old, new in replacements.items():
+                  text = text.replace(old, new)
+              (render_dir / template.name).write_text(text, encoding="utf-8")
+          PY
+
+      - name: Deploy manifests
+        shell: bash
+        run: |
+          kubectl apply -f k8s/rancher/rendered
+          kubectl -n "$KUBE_NAMESPACE" rollout status deployment/"$DEPLOYMENT_NAME" --timeout=180s
+
+      - name: Show deployment summary
+        shell: bash
+        run: |
+          kubectl -n "$KUBE_NAMESPACE" get deployment "$DEPLOYMENT_NAME"
+          kubectl -n "$KUBE_NAMESPACE" get service "$SERVICE_NAME"
+          kubectl -n "$KUBE_NAMESPACE" get ingress "$INGRESS_NAME"
+

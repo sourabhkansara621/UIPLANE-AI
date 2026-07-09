@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: __SERVICE_NAME__
+  namespace: __NAMESPACE__
+  labels:
+    app: __DEPLOYMENT_NAME__
+spec:
+  selector:
+    app: __DEPLOYMENT_NAME__
+  ports:
+    - name: http
+      port: 80
+      targetPort: __CONTAINER_PORT__
+  type: ClusterIP

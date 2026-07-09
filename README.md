@@ -111,6 +111,11 @@ if you want machine-specific overrides.
 Copy-Item .env.example .env
 ```
 
+Security note:
+- Recreate `.env` locally from `.env.example`; do not pull it from another branch or commit it to Git.
+- Fill secrets manually or through your approved secret manager, then keep the real `.env` only on your machine.
+- If `.env` is lost after a clean sync, copy `.env.example` again and re-enter only the machine-specific values you need.
+
 Set at minimum:
 - `JWT_SECRET_KEY`
 - `DATABASE_URL`
@@ -181,6 +186,22 @@ Open:
 - UI: `http://localhost:8000/`
 - Admin DB UI: `http://localhost:8000/admin/db`
 - Swagger docs: `http://localhost:8000/docs`
+
+## GitHub Actions Deployment To Rancher
+
+This repository now includes a GitHub Actions workflow at `.github/workflows/deploy-rancher.yml`.
+It builds a container image, pushes it to GitHub Container Registry, then deploys it to a Rancher-managed cluster using a kubeconfig stored as a GitHub secret.
+
+Required GitHub secrets:
+- `RANCHER_KUBECONFIG`: kubeconfig content for the target Rancher-managed cluster or project.
+- `APP_ENV_FILE`: the full application `.env` content used to create the Kubernetes secret `uniplane-ai-env` during deployment.
+
+How to deploy:
+1. Add the required GitHub secrets in the repository settings.
+2. If you need persistence, point `DATABASE_URL` in `APP_ENV_FILE` to Postgres instead of the default SQLite file.
+3. Run the `Deploy To Rancher` workflow from GitHub Actions and provide `namespace`, `ingress_host`, and `ingress_class`, or push to `UIPlane-dev` or `main` to deploy with the default values.
+4. The committed Rancher manifests now include all four core resources for this project: `Namespace`, `Deployment`, `Service`, and `Ingress`.
+5. Current default deployment target: namespace `uniplane-ai`, ingress host `uniplane-ai.example.internal`, ingress class `nginx`.
 
 ## Core API Overview
 
